@@ -1,7 +1,12 @@
 /** Stable error codes raised by pure domain rules. */
 export const DOMAIN_ERROR_CODES = [
+  "VALIDATION_ERROR",
+  "FORBIDDEN",
+  "NOT_FOUND",
+  "CONFLICT",
   "INVALID_STATE_TRANSITION",
   "INVALID_CLIENT_MESSAGE_ID",
+  "INTERNAL_ERROR",
 ] as const;
 
 /** A stable domain error code. */

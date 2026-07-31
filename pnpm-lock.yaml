@@ -69,6 +69,12 @@ importers:
 
   packages/ai: {}
 
+  packages/application:
+    dependencies:
+      '@crazyglegit/support-core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/cli: {}
 
   packages/contracts:

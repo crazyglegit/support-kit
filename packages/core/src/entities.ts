@@ -81,6 +81,15 @@ export interface Message extends ProjectScopedEntity {
   readonly deliveryStatus: MessageDeliveryStatus;
 }
 
+/** A durable record that one actor has read one message. */
+export interface MessageReceipt extends ProjectScopedEntity {
+  readonly messageId: string;
+  readonly conversationId: string;
+  readonly readerType: "customer" | "visitor" | "agent";
+  readonly readerId: string;
+  readonly readAt: Date;
+}
+
 /** Safe metadata describing an attachment without provider details. */
 export interface AttachmentMetadata extends ProjectScopedEntity {
   readonly messageId?: string;

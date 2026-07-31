@@ -7,7 +7,9 @@ All support-owned entities are project-scoped. `ProjectScopedEntity` supplies an
 opaque `id`, a server-derived `projectId`, and creation/update timestamps. The
 initial model includes customers, anonymous visitors, agents, conversations,
 participants, assignments, messages, attachment metadata, tags, saved replies,
-and audit events.
+message receipts, and audit events. A message receipt is scoped by project,
+message, conversation, reader type, and reader ID; it records `readAt` without
+changing the message's independent delivery status.
 
 Customer and agent entities reference the host's identities through
 `externalCustomerId` and `externalAgentId`; they do not reproduce the host user

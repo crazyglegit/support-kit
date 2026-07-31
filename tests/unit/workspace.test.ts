@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 const root = process.cwd();
 const packageDirectories = [
   "ai",
+  "application",
   "cli",
   "contracts",
   "core",
