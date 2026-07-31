@@ -92,12 +92,33 @@ export type {
   PaginationResultMetadata,
 } from "./pagination.js";
 export {
+  conversationAssignSchema,
+  conversationJoinSchema,
+  conversationLeaveSchema,
+  conversationStatusChangeSchema,
+  conversationTagSchema,
+  createSupportSocketEventEnvelopeSchema,
   createRealtimeEventEnvelopeSchema,
+  internalNoteCreateSchema,
+  messageReadSchema,
+  messageSendSchema,
   realtimeEventEnvelopeSchema,
+  SUPPORT_SOCKET_CLIENT_EVENTS,
+  SUPPORT_SOCKET_SERVER_EVENTS,
+  supportSocketAcknowledgementSchema,
+  supportSocketClientEventSchema,
+  supportSocketErrorSchema,
+  supportSocketEventEnvelopeSchema,
+  supportSocketServerEventSchema,
+  typingSchema,
 } from "./realtime.js";
 export type {
   RealtimeEventEnvelope,
   SupportRealtimeEvent,
+  SupportSocketAcknowledgement,
+  SupportSocketClientEvent,
+  SupportSocketEventEnvelope,
+  SupportSocketServerEvent,
 } from "./realtime.js";
 export {
   clientMessageIdSchema,

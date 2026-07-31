@@ -23,6 +23,8 @@ export interface SupportAuthContext {
   readonly method: string;
   readonly url: string;
   readonly headers: Readonly<Record<string, string>>;
+  /** Transport-specific credentials for host verification (for example Socket.IO auth). */
+  readonly data?: unknown;
 }
 
 /** Host-owned identity lookup boundary. */

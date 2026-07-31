@@ -44,6 +44,8 @@ export type {
   SupportAuthOperations,
   SupportConversationOperations,
   SupportCustomerOperations,
+  SupportCommittedEvent,
+  SupportEventOperations,
   SupportKit,
   SupportKitConfig,
   SupportKitHealth,

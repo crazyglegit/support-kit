@@ -12,3 +12,10 @@ const conversations = await support.conversations.listForCustomer({ actor });
 ```
 
 Public errors have a stable `code`, sanitized `message`, and optional safe details. Unknown dependency failures become `INTERNAL_ERROR`; disposed SDK instances return `SDK_DISPOSED`; absent optional features use `FEATURE_UNAVAILABLE` when an exposed optional feature operation requires them.
+
+`support.events.subscribe(listener)` exposes sanitized post-commit notifications
+for transport adapters. It does not expose repositories, transactions, or use-case
+instances. The returned unsubscribe function is idempotent in effect, and SDK
+disposal clears all listeners. Verified agent actors include their persisted role
+and exact permissions; these values come from the host authentication boundary,
+not a transport payload.

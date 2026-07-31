@@ -8,6 +8,7 @@ import {
   conversationStatusSchema,
   createApiSuccessEnvelopeSchema,
   createRealtimeEventEnvelopeSchema,
+  messageSendSchema,
   customerIdentitySchema,
   DEFAULT_ROLES,
   defaultRoleSchema,
@@ -20,6 +21,8 @@ import {
   SENDER_TYPES,
   senderTypeSchema,
   SUPPORT_PERMISSIONS,
+  supportSocketAcknowledgementSchema,
+  supportSocketEventEnvelopeSchema,
   visitorIdentitySchema,
 } from "./index.js";
 import type {
@@ -62,6 +65,46 @@ describe("identity contracts", () => {
     [agentIdentitySchema, { id: "agent-1", name: "", permissions: ["root"] }],
   ])("rejects invalid identity input", (schema, input) => {
     expect(schema.safeParse(input).success).toBe(false);
+  });
+});
+
+describe("Socket.IO contracts", () => {
+  it("strictly validates client payloads, acknowledgements, and envelopes", () => {
+    expect(
+      messageSendSchema.safeParse({
+        conversationId: "conversation-1",
+        body: "Hello",
+        clientMessageId: "client-message-01",
+      }).success,
+    ).toBe(true);
+    expect(
+      messageSendSchema.safeParse({
+        conversationId: "conversation-1",
+        body: "Hello",
+        clientMessageId: "client-message-01",
+        projectId: "untrusted-project",
+      }).success,
+    ).toBe(false);
+    expect(
+      supportSocketAcknowledgementSchema.safeParse({
+        ok: false,
+        error: {
+          code: "FORBIDDEN",
+          message: "Access denied.",
+          requestId: "request-1",
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      supportSocketEventEnvelopeSchema.safeParse({
+        eventId: "event-1",
+        eventType: "message.created",
+        version: 1,
+        occurredAt: "2026-08-01T00:00:00.000Z",
+        conversationId: "conversation-1",
+        data: { messageId: "message-1" },
+      }).success,
+    ).toBe(true);
   });
 });
 

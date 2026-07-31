@@ -15,10 +15,13 @@
     "@crazyglegit/support": "workspace:*",
     "@crazyglegit/support-db-drizzle": "workspace:*",
     "@crazyglegit/support-nextjs": "workspace:*",
+    "@crazyglegit/support-realtime-socketio": "workspace:*",
     "next": "16.2.12",
     "postgres": "3.4.9",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
     "@types/react": "19.2.18",

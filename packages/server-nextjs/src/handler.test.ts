@@ -32,9 +32,11 @@ function kit(overrides?: Partial<SupportKit>): SupportKit {
         Promise.resolve({
           type: "agent",
           id: "agent-1",
+          role: "support_agent",
           permissions: ["conversation.read"],
         }),
     },
+    events: { subscribe: () => () => undefined },
     healthCheck: unused,
     dispose: () => Promise.resolve(),
   };

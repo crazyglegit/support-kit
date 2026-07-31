@@ -1,7 +1,7 @@
 {
-  "name": "@crazyglegit/support-realtime",
+  "name": "@crazyglegit/support-realtime-socketio",
   "version": "0.0.0",
-  "description": "Socket.IO realtime adapter foundation for Support Kit",
+  "description": "Secure Socket.IO realtime adapter for Support Kit",
   "type": "module",
   "sideEffects": false,
   "files": [
@@ -22,6 +22,15 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "dependencies": {
+    "@crazyglegit/support": "workspace:*",
+    "@crazyglegit/support-contracts": "workspace:*",
+    "socket.io": "^4.8.1",
+    "zod": "^4.0.14"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.1"
   },
   "publishConfig": {
     "access": "restricted"

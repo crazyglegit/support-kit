@@ -33,6 +33,7 @@ import {
   unauthenticated,
 } from "./errors.js";
 import type {
+  SupportCommittedEvent,
   HealthCheckResult,
   HealthStatus,
   SupportKit,
@@ -43,27 +44,42 @@ function randomId(): string {
   return globalThis.crypto.randomUUID();
 }
 
-function publisher(config: SupportConfig) {
+type EventListener = (event: SupportCommittedEvent) => void | Promise<void>;
+
+function publisher(config: SupportConfig, listeners: Set<EventListener>) {
   const realtime = config.realtime;
-  if (!realtime) return undefined;
   return {
-    publish: (event: ApplicationEvent) =>
-      realtime.publish(
-        event.conversationId
-          ? `conversation:${event.conversationId}`
-          : `project:${event.projectId}`,
-        {
-          eventId: event.id,
-          eventType: event.type,
-          eventVersion: 1,
-          projectId: event.projectId,
-          ...(event.conversationId
-            ? { conversationId: event.conversationId }
-            : {}),
-          occurredAt: event.occurredAt.toISOString(),
-          data: event.data,
-        },
-      ),
+    publish: async (event: ApplicationEvent) => {
+      const committed: SupportCommittedEvent = {
+        eventId: event.id,
+        eventType: event.type,
+        ...(event.conversationId
+          ? { conversationId: event.conversationId }
+          : {}),
+        occurredAt: event.occurredAt.toISOString(),
+        data: event.data,
+      };
+      if (realtime)
+        await realtime.publish(
+          event.conversationId
+            ? `conversation:${event.conversationId}`
+            : `project:${event.projectId}`,
+          {
+            eventId: event.id,
+            eventType: event.type,
+            eventVersion: 1,
+            projectId: event.projectId,
+            ...(event.conversationId
+              ? { conversationId: event.conversationId }
+              : {}),
+            occurredAt: committed.occurredAt,
+            data: event.data,
+          },
+        );
+      await Promise.all(
+        [...listeners].map((listener) => Promise.resolve(listener(committed))),
+      );
+    },
   };
 }
 
@@ -129,6 +145,7 @@ async function adapterHealth(
 class ComposedSupportKit implements SupportKit {
   #disposed = false;
   readonly #config: ReturnType<typeof defineSupportConfig>;
+  readonly #eventListeners = new Set<EventListener>();
   public readonly projectId: string;
   public readonly conversations: SupportKit["conversations"];
   public readonly messages: SupportKit["messages"];
@@ -136,6 +153,7 @@ class ComposedSupportKit implements SupportKit {
   public readonly agents: SupportKit["agents"];
   public readonly tags: SupportKit["tags"];
   public readonly auth: SupportKit["auth"];
+  public readonly events: SupportKit["events"];
 
   public constructor(
     config: ReturnType<typeof defineSupportConfig>,
@@ -143,12 +161,12 @@ class ComposedSupportKit implements SupportKit {
   ) {
     this.#config = config;
     this.projectId = projectId;
-    const eventPublisher = publisher(config);
+    const eventPublisher = publisher(config, this.#eventListeners);
     const dependencies: ApplicationDependencies = {
       database: config.database,
       clock: { now: () => new Date() },
       ids: { generate: randomId },
-      ...(eventPublisher ? { events: eventPublisher } : {}),
+      events: eventPublisher,
     };
     const useCases = {
       create: new CreateConversation(dependencies),
@@ -274,9 +292,21 @@ class ComposedSupportKit implements SupportKit {
           return {
             type: "agent" as const,
             id: persisted.id,
+            role: persisted.role,
             permissions: persisted.permissions,
           };
         }),
+    };
+    this.events = {
+      subscribe: (listener) => {
+        if (this.#disposed)
+          throw new SupportKitError(
+            "SDK_DISPOSED",
+            "The support SDK has been disposed.",
+          );
+        this.#eventListeners.add(listener);
+        return () => this.#eventListeners.delete(listener);
+      },
     };
   }
 
@@ -327,6 +357,7 @@ class ComposedSupportKit implements SupportKit {
   public async dispose(): Promise<void> {
     if (this.#disposed) return;
     this.#disposed = true;
+    this.#eventListeners.clear();
     if (this.#config.lifecycle.adapterOwnership !== "sdk") return;
     const adapters: readonly (Disposable | undefined)[] = [
       this.#config.database,

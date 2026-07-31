@@ -25,6 +25,7 @@ import type {
   Tag,
 } from "@crazyglegit/support-core";
 import type {
+  DefaultRole,
   SupportAuthContext,
   SupportConfig,
 } from "@crazyglegit/support-contracts";
@@ -110,7 +111,24 @@ export interface SupportAuthOperations {
   resolveVisitor(
     context: SupportAuthContext,
   ): Promise<CustomerActor & { readonly type: "visitor" }>;
-  resolveAgent(context: SupportAuthContext): Promise<AgentActor>;
+  resolveAgent(
+    context: SupportAuthContext,
+  ): Promise<AgentActor & { readonly role: DefaultRole }>;
+}
+
+/** Sanitized post-commit notification exposed without application internals. */
+export interface SupportCommittedEvent {
+  readonly eventId: string;
+  readonly eventType: string;
+  readonly conversationId?: string;
+  readonly occurredAt: string;
+  readonly data: Readonly<Record<string, unknown>>;
+}
+
+export interface SupportEventOperations {
+  subscribe(
+    listener: (event: SupportCommittedEvent) => void | Promise<void>,
+  ): () => void;
 }
 
 export type HealthStatus = "healthy" | "degraded" | "unhealthy";
@@ -144,6 +162,7 @@ export interface SupportKit {
   readonly agents: SupportAgentOperations;
   readonly tags: SupportTagOperations;
   readonly auth: SupportAuthOperations;
+  readonly events: SupportEventOperations;
   healthCheck(): Promise<SupportKitHealth>;
   dispose(): Promise<void>;
 }

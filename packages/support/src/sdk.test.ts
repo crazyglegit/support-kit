@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   Agent,
   AnonymousVisitor,
@@ -393,8 +393,31 @@ describe("public SDK composition", () => {
     expect(agent).toMatchObject({
       type: "agent",
       id: database.agentItems[0]?.id,
+      role: "support_agent",
       permissions: ["conversation.read"],
     });
+  });
+
+  it("notifies and unsubscribes post-commit SDK event listeners", async () => {
+    const support = await createSupportKit(config(new FakeDatabase()));
+    const listener = vi.fn();
+    const unsubscribe = support.events.subscribe(listener);
+    await support.auth.resolveCustomer({
+      method: "GET",
+      url: "https://example.com",
+      headers: {},
+    });
+    expect(listener).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "customer.updated" }),
+    );
+    unsubscribe();
+    listener.mockClear();
+    await support.auth.resolveCustomer({
+      method: "GET",
+      url: "https://example.com",
+      headers: {},
+    });
+    expect(listener).not.toHaveBeenCalled();
   });
 
   it("provisions visitors idempotently without merging customers", async () => {

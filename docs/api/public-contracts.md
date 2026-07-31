@@ -17,3 +17,9 @@ validation.
 
 Adapter ports are TypeScript interfaces rather than Zod schemas. Provider
 implementations remain opaque to runtime configuration validation.
+
+Socket.IO contracts add strict client payload schemas, acknowledgement schemas,
+public client/server event-name enums, and a project-implicit event envelope with
+`eventId`, `eventType`, `version`, `occurredAt`, optional `conversationId`, and
+sanitized `data`. The earlier provider-neutral realtime envelope remains available
+for adapter compatibility.
