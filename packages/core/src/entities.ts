@@ -18,7 +18,10 @@ export interface ProjectScopedEntity {
 /** A host application installation boundary. */
 export interface Project {
   readonly id: string;
+  /** Unique installation-facing identifier; never used as a foreign key. */
+  readonly projectKey: string;
   readonly name: string;
+  readonly metadata: Readonly<Record<string, unknown>>;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }

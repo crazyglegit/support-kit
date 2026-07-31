@@ -1,0 +1,845 @@
+import { and, desc, eq, getTableColumns, isNull, type SQL } from "drizzle-orm";
+import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import postgres, { type Sql } from "postgres";
+import {
+  DomainError,
+  isDomainError,
+  type Agent,
+  type AttachmentMetadata,
+  type AuditEvent,
+  type Conversation,
+  type ConversationAssignment,
+  type ConversationParticipant,
+  type Customer,
+  type Message,
+  type MessageReceipt,
+  type Project,
+  type SavedReply,
+  type SupportDatabaseAdapter,
+  type Tag,
+} from "@crazyglegit/support-core";
+import * as schema from "./schema.js";
+
+type Database = PostgresJsDatabase<typeof schema>;
+
+/** Options for constructing the PostgreSQL persistence adapter. */
+export type DrizzleSupportDatabaseOptions =
+  | { readonly connectionString: string; readonly maxConnections?: number }
+  | { readonly client: Sql };
+
+function mapProject(row: typeof schema.projects.$inferSelect): Project {
+  return {
+    id: row.id,
+    projectKey: row.projectKey,
+    name: row.name,
+    metadata: row.metadata,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+function mapCustomer(row: typeof schema.customers.$inferSelect): Customer {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    externalCustomerId: row.externalCustomerId,
+    ...(row.name === null ? {} : { name: row.name }),
+    ...(row.email === null ? {} : { email: row.email }),
+    metadata: row.metadata,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+function mapAgent(row: typeof schema.agents.$inferSelect): Agent {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    externalAgentId: row.externalAgentId,
+    name: row.name,
+    ...(row.email === null ? {} : { email: row.email }),
+    role: row.role as Agent["role"],
+    permissions: row.permissions as Agent["permissions"],
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+function mapConversation(
+  row: typeof schema.conversations.$inferSelect,
+): Conversation {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    status: row.status,
+    ...(row.subject === null ? {} : { subject: row.subject }),
+    ...(row.priority === null
+      ? {}
+      : { priority: row.priority as NonNullable<Conversation["priority"]> }),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+function mapParticipant(
+  row: typeof schema.conversationParticipants.$inferSelect,
+): ConversationParticipant {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    conversationId: row.conversationId,
+    participantId: row.participantId,
+    participantType: row.participantType,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+function mapAssignment(
+  row: typeof schema.conversationAssignments.$inferSelect,
+): ConversationAssignment {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    conversationId: row.conversationId,
+    agentId: row.agentId,
+    ...(row.assignedByAgentId === null
+      ? {}
+      : { assignedByAgentId: row.assignedByAgentId }),
+    ...(row.unassignedAt === null ? {} : { unassignedAt: row.unassignedAt }),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+function mapMessage(row: typeof schema.messages.$inferSelect): Message {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    conversationId: row.conversationId,
+    ...(row.clientMessageId === null
+      ? {}
+      : { clientMessageId: row.clientMessageId }),
+    type: row.type,
+    senderType: row.senderType,
+    ...(row.senderId === null ? {} : { senderId: row.senderId }),
+    body: row.body,
+    deliveryStatus: row.deliveryStatus,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+function mapReceipt(
+  row: typeof schema.messageReceipts.$inferSelect,
+): MessageReceipt {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    messageId: row.messageId,
+    conversationId: row.conversationId,
+    readerType: row.readerType,
+    readerId: row.readerId,
+    readAt: row.readAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+function mapAttachment(
+  row: typeof schema.attachments.$inferSelect,
+): AttachmentMetadata {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    ...(row.messageId === null ? {} : { messageId: row.messageId }),
+    fileName: row.fileName,
+    mediaType: row.mediaType,
+    sizeBytes: row.sizeBytes,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+function mapTag(row: typeof schema.tags.$inferSelect): Tag {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    name: row.name,
+    ...(row.color === null ? {} : { color: row.color }),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+function mapSavedReply(
+  row: typeof schema.savedReplies.$inferSelect,
+): SavedReply {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    title: row.title,
+    body: row.body,
+    createdByAgentId: row.createdByAgentId,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+/** Converts provider failures to the stable error vocabulary. Internal to this package. */
+export function throwSanitizedDatabaseError(error: unknown): never {
+  if (isDomainError(error)) throw error;
+  let candidate: unknown = error;
+  let code = "";
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (typeof candidate !== "object" || candidate === null) break;
+    if ("code" in candidate && typeof candidate.code === "string") {
+      code = candidate.code;
+      break;
+    }
+    candidate = "cause" in candidate ? candidate.cause : undefined;
+  }
+  if (code === "23505")
+    throw new DomainError(
+      "CONFLICT",
+      "The record conflicts with existing support data.",
+    );
+  if (code === "23503")
+    throw new DomainError(
+      "NOT_FOUND",
+      "A referenced support record was not found.",
+    );
+  if (code === "23502" || code === "22P02" || code === "23514")
+    throw new DomainError("VALIDATION_ERROR", "The support record is invalid.");
+  throw new DomainError("INTERNAL_ERROR", "The database operation failed.");
+}
+
+function missingResult(): never {
+  throw new DomainError("INTERNAL_ERROR", "The database operation failed.");
+}
+
+async function safe<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    return throwSanitizedDatabaseError(error);
+  }
+}
+
+function createAdapter(db: Database): SupportDatabaseAdapter {
+  const adapter: SupportDatabaseAdapter = {
+    projects: {
+      create: (project) =>
+        safe(async () => {
+          const [row] = await db
+            .insert(schema.projects)
+            .values(project)
+            .returning();
+          if (!row) return missingResult();
+          return mapProject(row);
+        }),
+      findById: (id) =>
+        safe(async () => {
+          const [row] = await db
+            .select()
+            .from(schema.projects)
+            .where(eq(schema.projects.id, id))
+            .limit(1);
+          return row ? mapProject(row) : null;
+        }),
+      findByKey: (key) =>
+        safe(async () => {
+          const [row] = await db
+            .select()
+            .from(schema.projects)
+            .where(eq(schema.projects.projectKey, key))
+            .limit(1);
+          return row ? mapProject(row) : null;
+        }),
+      updateMetadata: (id, metadata, updatedAt) =>
+        safe(async () => {
+          const [row] = await db
+            .update(schema.projects)
+            .set({ metadata, updatedAt })
+            .where(eq(schema.projects.id, id))
+            .returning();
+          if (!row)
+            throw new DomainError("NOT_FOUND", "Project was not found.");
+          return mapProject(row);
+        }),
+    },
+    customers: {
+      findById: ({ projectId, id }) =>
+        safe(async () => {
+          const [row] = await db
+            .select()
+            .from(schema.customers)
+            .where(
+              and(
+                eq(schema.customers.projectId, projectId),
+                eq(schema.customers.id, id),
+              ),
+            )
+            .limit(1);
+          return row ? mapCustomer(row) : null;
+        }),
+      findByExternalId: (projectId, externalId) =>
+        safe(async () => {
+          const [row] = await db
+            .select()
+            .from(schema.customers)
+            .where(
+              and(
+                eq(schema.customers.projectId, projectId),
+                eq(schema.customers.externalCustomerId, externalId),
+              ),
+            )
+            .limit(1);
+          return row ? mapCustomer(row) : null;
+        }),
+      save: (entity) =>
+        safe(async () => {
+          const [row] = await db
+            .insert(schema.customers)
+            .values(entity)
+            .onConflictDoUpdate({
+              target: [
+                schema.customers.projectId,
+                schema.customers.externalCustomerId,
+              ],
+              set: {
+                name: entity.name ?? null,
+                email: entity.email ?? null,
+                metadata: entity.metadata,
+                updatedAt: entity.updatedAt,
+              },
+            })
+            .returning();
+          if (!row) return missingResult();
+          return mapCustomer(row);
+        }),
+    },
+    agents: {
+      findById: ({ projectId, id }) =>
+        safe(async () => {
+          const [row] = await db
+            .select()
+            .from(schema.agents)
+            .where(
+              and(
+                eq(schema.agents.projectId, projectId),
+                eq(schema.agents.id, id),
+              ),
+            )
+            .limit(1);
+          return row ? mapAgent(row) : null;
+        }),
+      findByExternalId: (projectId, externalId) =>
+        safe(async () => {
+          const [row] = await db
+            .select()
+            .from(schema.agents)
+            .where(
+              and(
+                eq(schema.agents.projectId, projectId),
+                eq(schema.agents.externalAgentId, externalId),
+              ),
+            )
+            .limit(1);
+          return row ? mapAgent(row) : null;
+        }),
+      save: (entity) =>
+        safe(async () => {
+          const [row] = await db
+            .insert(schema.agents)
+            .values({ ...entity, permissions: entity.permissions })
+            .onConflictDoUpdate({
+              target: [schema.agents.projectId, schema.agents.externalAgentId],
+              set: {
+                name: entity.name,
+                email: entity.email ?? null,
+                role: entity.role,
+                permissions: entity.permissions,
+                updatedAt: entity.updatedAt,
+              },
+            })
+            .returning();
+          if (!row) return missingResult();
+          return mapAgent(row);
+        }),
+    },
+    conversations: {
+      findById: ({ projectId, id }) =>
+        safe(async () => {
+          const [row] = await db
+            .select()
+            .from(schema.conversations)
+            .where(
+              and(
+                eq(schema.conversations.projectId, projectId),
+                eq(schema.conversations.id, id),
+              ),
+            )
+            .limit(1);
+          return row ? mapConversation(row) : null;
+        }),
+      save: (entity) =>
+        safe(async () => {
+          const [row] = await db
+            .insert(schema.conversations)
+            .values(entity)
+            .onConflictDoUpdate({
+              target: schema.conversations.id,
+              set: {
+                status: entity.status,
+                subject: entity.subject ?? null,
+                priority: entity.priority ?? null,
+                updatedAt: entity.updatedAt,
+              },
+              setWhere: eq(schema.conversations.projectId, entity.projectId),
+            })
+            .returning();
+          if (!row)
+            throw new DomainError("NOT_FOUND", "Conversation was not found.");
+          return mapConversation(row);
+        }),
+      listByParticipant: (projectId, participantType, participantId) =>
+        safe(async () =>
+          (
+            await db
+              .select(getTableColumns(schema.conversations))
+              .from(schema.conversations)
+              .innerJoin(
+                schema.conversationParticipants,
+                and(
+                  eq(schema.conversationParticipants.projectId, projectId),
+                  eq(
+                    schema.conversationParticipants.conversationId,
+                    schema.conversations.id,
+                  ),
+                ),
+              )
+              .where(
+                and(
+                  eq(schema.conversations.projectId, projectId),
+                  eq(
+                    schema.conversationParticipants.participantType,
+                    participantType,
+                  ),
+                  eq(
+                    schema.conversationParticipants.participantId,
+                    participantId,
+                  ),
+                ),
+              )
+              .orderBy(desc(schema.conversations.updatedAt))
+          ).map(mapConversation),
+        ),
+      listInbox: (projectId, agentId) =>
+        safe(async () => {
+          const base: SQL[] = [eq(schema.conversations.projectId, projectId)];
+          if (agentId)
+            base.push(eq(schema.conversationAssignments.agentId, agentId));
+          const rows = await db
+            .select(getTableColumns(schema.conversations))
+            .from(schema.conversations)
+            .leftJoin(
+              schema.conversationAssignments,
+              and(
+                eq(schema.conversationAssignments.projectId, projectId),
+                eq(
+                  schema.conversationAssignments.conversationId,
+                  schema.conversations.id,
+                ),
+                isNull(schema.conversationAssignments.unassignedAt),
+              ),
+            )
+            .where(and(...base))
+            .orderBy(desc(schema.conversations.updatedAt));
+          return rows.map(mapConversation);
+        }),
+    },
+    participants: {
+      findById: ({ projectId, id }) =>
+        safe(async () => {
+          const [row] = await db
+            .select()
+            .from(schema.conversationParticipants)
+            .where(
+              and(
+                eq(schema.conversationParticipants.projectId, projectId),
+                eq(schema.conversationParticipants.id, id),
+              ),
+            )
+            .limit(1);
+          return row ? mapParticipant(row) : null;
+        }),
+      findParticipant: (
+        projectId,
+        conversationId,
+        participantType,
+        participantId,
+      ) =>
+        safe(async () => {
+          const [row] = await db
+            .select()
+            .from(schema.conversationParticipants)
+            .where(
+              and(
+                eq(schema.conversationParticipants.projectId, projectId),
+                eq(
+                  schema.conversationParticipants.conversationId,
+                  conversationId,
+                ),
+                eq(
+                  schema.conversationParticipants.participantType,
+                  participantType,
+                ),
+                eq(
+                  schema.conversationParticipants.participantId,
+                  participantId,
+                ),
+              ),
+            )
+            .limit(1);
+          return row ? mapParticipant(row) : null;
+        }),
+      save: (entity) =>
+        safe(async () => {
+          const [row] = await db
+            .insert(schema.conversationParticipants)
+            .values(entity)
+            .onConflictDoNothing()
+            .returning();
+          if (row) return mapParticipant(row);
+          const existing = await adapter.participants.findParticipant(
+            entity.projectId,
+            entity.conversationId,
+            entity.participantType,
+            entity.participantId,
+          );
+          if (!existing) return missingResult();
+          return existing;
+        }),
+    },
+    assignments: {
+      findById: ({ projectId, id }) =>
+        safe(async () => {
+          const [row] = await db
+            .select()
+            .from(schema.conversationAssignments)
+            .where(
+              and(
+                eq(schema.conversationAssignments.projectId, projectId),
+                eq(schema.conversationAssignments.id, id),
+              ),
+            )
+            .limit(1);
+          return row ? mapAssignment(row) : null;
+        }),
+      findActive: (projectId, conversationId) =>
+        safe(async () => {
+          const [row] = await db
+            .select()
+            .from(schema.conversationAssignments)
+            .where(
+              and(
+                eq(schema.conversationAssignments.projectId, projectId),
+                eq(
+                  schema.conversationAssignments.conversationId,
+                  conversationId,
+                ),
+                isNull(schema.conversationAssignments.unassignedAt),
+              ),
+            )
+            .limit(1);
+          return row ? mapAssignment(row) : null;
+        }),
+      save: (entity) =>
+        safe(async () => {
+          const existing = await adapter.assignments.findById({
+            projectId: entity.projectId,
+            id: entity.id,
+          });
+          if (existing) {
+            if (
+              existing.conversationId !== entity.conversationId ||
+              existing.agentId !== entity.agentId ||
+              existing.assignedByAgentId !== entity.assignedByAgentId ||
+              !entity.unassignedAt
+            )
+              throw new DomainError(
+                "CONFLICT",
+                "Assignment history is immutable.",
+              );
+            const [row] = await db
+              .update(schema.conversationAssignments)
+              .set({
+                unassignedAt: entity.unassignedAt,
+                updatedAt: entity.updatedAt,
+              })
+              .where(
+                and(
+                  eq(
+                    schema.conversationAssignments.projectId,
+                    entity.projectId,
+                  ),
+                  eq(schema.conversationAssignments.id, entity.id),
+                  isNull(schema.conversationAssignments.unassignedAt),
+                ),
+              )
+              .returning();
+            if (!row)
+              throw new DomainError(
+                "CONFLICT",
+                "Assignment history is immutable.",
+              );
+            return mapAssignment(row);
+          }
+          const [row] = await db
+            .insert(schema.conversationAssignments)
+            .values(entity)
+            .returning();
+          if (!row) return missingResult();
+          return mapAssignment(row);
+        }),
+    },
+    messages: {
+      findById: ({ projectId, id }) =>
+        safe(async () => {
+          const [row] = await db
+            .select()
+            .from(schema.messages)
+            .where(
+              and(
+                eq(schema.messages.projectId, projectId),
+                eq(schema.messages.id, id),
+              ),
+            )
+            .limit(1);
+          return row ? mapMessage(row) : null;
+        }),
+      findByClientMessageId: (projectId, conversationId, clientMessageId) =>
+        safe(async () => {
+          const [row] = await db
+            .select()
+            .from(schema.messages)
+            .where(
+              and(
+                eq(schema.messages.projectId, projectId),
+                eq(schema.messages.conversationId, conversationId),
+                eq(schema.messages.clientMessageId, clientMessageId),
+              ),
+            )
+            .limit(1);
+          return row ? mapMessage(row) : null;
+        }),
+      listByConversation: (projectId, conversationId) =>
+        safe(async () =>
+          (
+            await db
+              .select()
+              .from(schema.messages)
+              .where(
+                and(
+                  eq(schema.messages.projectId, projectId),
+                  eq(schema.messages.conversationId, conversationId),
+                ),
+              )
+              .orderBy(schema.messages.createdAt, schema.messages.id)
+          ).map(mapMessage),
+        ),
+      save: (entity) =>
+        safe(async () => {
+          const [row] = await db
+            .insert(schema.messages)
+            .values(entity)
+            .onConflictDoUpdate({
+              target: schema.messages.id,
+              set: {
+                deliveryStatus: entity.deliveryStatus,
+                updatedAt: entity.updatedAt,
+              },
+              setWhere: eq(schema.messages.projectId, entity.projectId),
+            })
+            .returning();
+          if (!row)
+            throw new DomainError("NOT_FOUND", "Message was not found.");
+          return mapMessage(row);
+        }),
+    },
+    messageReceipts: {
+      findByMessageAndReader: (projectId, messageId, readerType, readerId) =>
+        safe(async () => {
+          const [row] = await db
+            .select()
+            .from(schema.messageReceipts)
+            .where(
+              and(
+                eq(schema.messageReceipts.projectId, projectId),
+                eq(schema.messageReceipts.messageId, messageId),
+                eq(schema.messageReceipts.readerType, readerType),
+                eq(schema.messageReceipts.readerId, readerId),
+              ),
+            )
+            .limit(1);
+          return row ? mapReceipt(row) : null;
+        }),
+      create: (entity) =>
+        safe(async () => {
+          const [row] = await db
+            .insert(schema.messageReceipts)
+            .values(entity)
+            .onConflictDoNothing()
+            .returning();
+          if (row) return mapReceipt(row);
+          const existing = await adapter.messageReceipts.findByMessageAndReader(
+            entity.projectId,
+            entity.messageId,
+            entity.readerType,
+            entity.readerId,
+          );
+          if (!existing) return missingResult();
+          return existing;
+        }),
+    },
+    attachments: {
+      findById: ({ projectId, id }) =>
+        safe(async () => {
+          const [row] = await db
+            .select()
+            .from(schema.attachments)
+            .where(
+              and(
+                eq(schema.attachments.projectId, projectId),
+                eq(schema.attachments.id, id),
+              ),
+            )
+            .limit(1);
+          return row ? mapAttachment(row) : null;
+        }),
+      save: (entity) =>
+        safe(async () => {
+          const [row] = await db
+            .insert(schema.attachments)
+            .values(entity)
+            .onConflictDoUpdate({
+              target: schema.attachments.id,
+              set: {
+                messageId: entity.messageId ?? null,
+                updatedAt: entity.updatedAt,
+              },
+              setWhere: eq(schema.attachments.projectId, entity.projectId),
+            })
+            .returning();
+          if (!row)
+            throw new DomainError("NOT_FOUND", "Attachment was not found.");
+          return mapAttachment(row);
+        }),
+    },
+    tags: {
+      findById: ({ projectId, id }) =>
+        safe(async () => {
+          const [row] = await db
+            .select()
+            .from(schema.tags)
+            .where(
+              and(eq(schema.tags.projectId, projectId), eq(schema.tags.id, id)),
+            )
+            .limit(1);
+          return row ? mapTag(row) : null;
+        }),
+      save: (entity) =>
+        safe(async () => {
+          const [row] = await db
+            .insert(schema.tags)
+            .values(entity)
+            .onConflictDoUpdate({
+              target: [schema.tags.projectId, schema.tags.name],
+              set: { color: entity.color ?? null, updatedAt: entity.updatedAt },
+            })
+            .returning();
+          if (!row) return missingResult();
+          return mapTag(row);
+        }),
+    },
+    conversationTags: {
+      add: (projectId, conversationId, tagId) =>
+        safe(async () => {
+          await db
+            .insert(schema.conversationTags)
+            .values({
+              projectId,
+              conversationId,
+              tagId,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .onConflictDoNothing();
+        }),
+      remove: (projectId, conversationId, tagId) =>
+        safe(async () => {
+          await db
+            .delete(schema.conversationTags)
+            .where(
+              and(
+                eq(schema.conversationTags.projectId, projectId),
+                eq(schema.conversationTags.conversationId, conversationId),
+                eq(schema.conversationTags.tagId, tagId),
+              ),
+            );
+        }),
+    },
+    savedReplies: {
+      findById: ({ projectId, id }) =>
+        safe(async () => {
+          const [row] = await db
+            .select()
+            .from(schema.savedReplies)
+            .where(
+              and(
+                eq(schema.savedReplies.projectId, projectId),
+                eq(schema.savedReplies.id, id),
+              ),
+            )
+            .limit(1);
+          return row ? mapSavedReply(row) : null;
+        }),
+      save: (entity) =>
+        safe(async () => {
+          const [row] = await db
+            .insert(schema.savedReplies)
+            .values(entity)
+            .onConflictDoUpdate({
+              target: schema.savedReplies.id,
+              set: {
+                title: entity.title,
+                body: entity.body,
+                updatedAt: entity.updatedAt,
+              },
+              setWhere: eq(schema.savedReplies.projectId, entity.projectId),
+            })
+            .returning();
+          if (!row)
+            throw new DomainError("NOT_FOUND", "Saved reply was not found.");
+          return mapSavedReply(row);
+        }),
+    },
+    audit: {
+      append: (event: AuditEvent) =>
+        safe(async () => {
+          await db.insert(schema.auditLogs).values(event);
+        }),
+    },
+    transaction: (operation) =>
+      safe(() =>
+        db.transaction(async (transaction) =>
+          operation(createAdapter(transaction as Database)),
+        ),
+      ),
+  };
+  return adapter;
+}
+
+/** Creates a project-scoped Drizzle/PostgreSQL support database adapter. */
+export function createDrizzleSupportDatabase(
+  options: DrizzleSupportDatabaseOptions,
+): SupportDatabaseAdapter {
+  const client =
+    "client" in options
+      ? options.client
+      : postgres(options.connectionString, {
+          max: options.maxConnections ?? 10,
+        });
+  return createAdapter(drizzle(client, { schema }));
+}

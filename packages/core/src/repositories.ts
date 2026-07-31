@@ -8,9 +8,22 @@ import type {
   Customer,
   Message,
   MessageReceipt,
+  Project,
   SavedReply,
   Tag,
 } from "./entities.js";
+
+/** Administrative project lookup boundary. Tenant repositories never accept project keys. */
+export interface ProjectRepository {
+  create(project: Project): Promise<Project>;
+  findById(id: string): Promise<Project | null>;
+  findByKey(projectKey: string): Promise<Project | null>;
+  updateMetadata(
+    id: string,
+    metadata: Readonly<Record<string, unknown>>,
+    updatedAt: Date,
+  ): Promise<Project>;
+}
 
 /** Project-scoped lookup input used by repository ports. */
 export interface ProjectEntityKey {
@@ -120,6 +133,7 @@ export interface AuditRepository {
 
 /** Minimal provider-independent database boundary used by application services. */
 export interface SupportDatabaseAdapter {
+  readonly projects: ProjectRepository;
   readonly customers: CustomerRepository;
   readonly agents: AgentRepository;
   readonly conversations: ConversationRepository;

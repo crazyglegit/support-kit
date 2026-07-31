@@ -10,6 +10,7 @@ import {
   type Customer,
   type Message,
   type MessageReceipt,
+  type Project,
   type ProjectScopedEntity,
   type SavedReply,
   type SupportDatabaseAdapter,
@@ -39,6 +40,7 @@ import {
 } from "./index.js";
 
 interface State {
+  projects: Project[];
   customers: Customer[];
   agents: Agent[];
   conversations: Conversation[];
@@ -88,6 +90,7 @@ class FakeDatabase implements SupportDatabaseAdapter {
 
   public constructor(state?: Partial<State>) {
     this.state = {
+      projects: [],
       customers: [],
       agents: [],
       conversations: [],
@@ -103,6 +106,36 @@ class FakeDatabase implements SupportDatabaseAdapter {
       ...state,
     };
   }
+
+  public readonly projects: SupportDatabaseAdapter["projects"] = {
+    create: (project) => {
+      this.state.projects.push(project);
+      return Promise.resolve(project);
+    },
+    findById: (id) =>
+      Promise.resolve(
+        this.state.projects.find((project) => project.id === id) ?? null,
+      ),
+    findByKey: (projectKey) =>
+      Promise.resolve(
+        this.state.projects.find(
+          (project) => project.projectKey === projectKey,
+        ) ?? null,
+      ),
+    updateMetadata: (id, metadata, updatedAt) => {
+      const index = this.state.projects.findIndex(
+        (project) => project.id === id,
+      );
+      const existing = this.state.projects[index];
+      if (!existing)
+        return Promise.reject(
+          new DomainError("NOT_FOUND", "Project was not found."),
+        );
+      const updated = { ...existing, metadata, updatedAt };
+      this.state.projects[index] = updated;
+      return Promise.resolve(updated);
+    },
+  };
 
   public readonly customers = {
     findById: (key: { projectId: string; id: string }) =>

@@ -66,6 +66,7 @@ export type {
   CustomerRepository,
   MessageRepository,
   MessageReceiptRepository,
+  ProjectRepository,
   ProjectEntityKey,
   SavedReplyRepository,
   SupportDatabaseAdapter,
