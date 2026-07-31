@@ -23,6 +23,9 @@
   "engines": {
     "node": ">=22"
   },
+  "dependencies": {
+    "@crazyglegit/support-contracts": "workspace:*"
+  },
   "publishConfig": {
     "access": "restricted"
   }

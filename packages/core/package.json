@@ -14,7 +14,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "rimraf dist && tsc -p tsconfig.build.json",
     "clean": "rimraf dist tsconfig.tsbuildinfo",
     "lint": "eslint src --max-warnings 0",
     "test": "vitest run --passWithNoTests",

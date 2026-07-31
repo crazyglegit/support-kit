@@ -1,2 +1,14 @@
-/** Package boundary for the small, stable consumer API. */
-export const SUPPORT_PACKAGE = "@crazyglegit/support" as const;
+/** Defines and validates provider-independent support configuration. */
+export { defineSupportConfig } from "@crazyglegit/support-contracts";
+export type {
+  FeatureFlags,
+  SecurityConfig,
+  SupportAIAdapter,
+  SupportAuthAdapter,
+  SupportConfig,
+  SupportDatabaseAdapter,
+  SupportNotificationAdapter,
+  SupportRealtimeAdapter,
+  SupportStorageAdapter,
+  WidgetConfig,
+} from "@crazyglegit/support-contracts";
