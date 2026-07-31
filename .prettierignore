@@ -1,0 +1,12 @@
+.changeset/pre.json
+AGENTS.md
+.next
+.pnpm-store
+.turbo
+coverage
+dist
+docs/MASTER_BLUEPRINT.md
+node_modules
+playwright-report
+pnpm-lock.yaml
+test-results
