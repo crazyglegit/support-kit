@@ -100,6 +100,32 @@ export const customers = pgTable(
   ],
 );
 
+export const visitors = pgTable(
+  "support_visitors",
+  {
+    id: uuid("id").primaryKey(),
+    projectId: projectId(),
+    externalVisitorId: text("external_visitor_id").notNull(),
+    sessionId: text("session_id"),
+    name: text("name"),
+    email: text("email"),
+    metadata: jsonb("metadata")
+      .$type<Readonly<Record<string, unknown>>>()
+      .notNull()
+      .default({}),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex("support_visitors_project_external_uidx").on(
+      t.projectId,
+      t.externalVisitorId,
+    ),
+    unique("support_visitors_project_id_unique").on(t.projectId, t.id),
+    index("support_visitors_project_session_idx").on(t.projectId, t.sessionId),
+  ],
+);
+
 export const customerSessions = pgTable(
   "support_customer_sessions",
   {

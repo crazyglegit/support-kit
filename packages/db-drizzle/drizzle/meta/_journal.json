@@ -8,6 +8,13 @@
       "when": 1785524097494,
       "tag": "0000_nappy_mindworm",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785527688454,
+      "tag": "0001_spicy_microchip",
+      "breakpoints": true
     }
   ]
 }

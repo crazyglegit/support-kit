@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DomainError,
   type Agent,
+  type AnonymousVisitor,
   type AttachmentMetadata,
   type AuditEvent,
   type Conversation,
@@ -41,6 +42,7 @@ import {
 
 interface State {
   projects: Project[];
+  visitors: AnonymousVisitor[];
   customers: Customer[];
   agents: Agent[];
   conversations: Conversation[];
@@ -91,6 +93,7 @@ class FakeDatabase implements SupportDatabaseAdapter {
   public constructor(state?: Partial<State>) {
     this.state = {
       projects: [],
+      visitors: [],
       customers: [],
       agents: [],
       conversations: [],
@@ -161,6 +164,21 @@ class FakeDatabase implements SupportDatabaseAdapter {
           (item) =>
             item.projectId === projectId &&
             item.externalAgentId === externalAgentId,
+        ) ?? null,
+      ),
+  };
+
+  public readonly visitors = {
+    findById: (key: { projectId: string; id: string }) =>
+      repository(this.state.visitors).findById(key),
+    save: (entity: AnonymousVisitor) =>
+      repository(this.state.visitors).save(entity),
+    findByExternalId: (projectId: string, externalVisitorId: string) =>
+      Promise.resolve(
+        this.state.visitors.find(
+          (item) =>
+            item.projectId === projectId &&
+            item.externalVisitorId === externalVisitorId,
         ) ?? null,
       ),
   };

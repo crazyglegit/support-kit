@@ -1,10 +1,19 @@
-import { and, desc, eq, getTableColumns, isNull, type SQL } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  getTableColumns,
+  isNull,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres, { type Sql } from "postgres";
 import {
   DomainError,
   isDomainError,
   type Agent,
+  type AnonymousVisitor,
   type AttachmentMetadata,
   type AuditEvent,
   type Conversation,
@@ -45,6 +54,22 @@ function mapCustomer(row: typeof schema.customers.$inferSelect): Customer {
     ...(row.name === null ? {} : { name: row.name }),
     ...(row.email === null ? {} : { email: row.email }),
     metadata: row.metadata,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+function mapVisitor(
+  row: typeof schema.visitors.$inferSelect,
+): AnonymousVisitor {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    externalVisitorId: row.externalVisitorId,
+    ...(row.sessionId === null ? {} : { sessionId: row.sessionId }),
+    ...(row.name === null ? {} : { name: row.name }),
+    ...(row.email === null ? {} : { email: row.email }),
+    metadata: row.metadata,
+    lastSeenAt: row.lastSeenAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -356,6 +381,59 @@ function createAdapter(db: Database): SupportDatabaseAdapter {
             .returning();
           if (!row) return missingResult();
           return mapAgent(row);
+        }),
+    },
+    visitors: {
+      findById: ({ projectId, id }) =>
+        safe(async () => {
+          const [row] = await db
+            .select()
+            .from(schema.visitors)
+            .where(
+              and(
+                eq(schema.visitors.projectId, projectId),
+                eq(schema.visitors.id, id),
+              ),
+            )
+            .limit(1);
+          return row ? mapVisitor(row) : null;
+        }),
+      findByExternalId: (projectId, externalVisitorId) =>
+        safe(async () => {
+          const [row] = await db
+            .select()
+            .from(schema.visitors)
+            .where(
+              and(
+                eq(schema.visitors.projectId, projectId),
+                eq(schema.visitors.externalVisitorId, externalVisitorId),
+              ),
+            )
+            .limit(1);
+          return row ? mapVisitor(row) : null;
+        }),
+      save: (entity) =>
+        safe(async () => {
+          const [row] = await db
+            .insert(schema.visitors)
+            .values(entity)
+            .onConflictDoUpdate({
+              target: [
+                schema.visitors.projectId,
+                schema.visitors.externalVisitorId,
+              ],
+              set: {
+                sessionId: entity.sessionId ?? null,
+                name: entity.name ?? null,
+                email: entity.email ?? null,
+                metadata: entity.metadata,
+                lastSeenAt: entity.lastSeenAt,
+                updatedAt: entity.updatedAt,
+              },
+            })
+            .returning();
+          if (!row) return missingResult();
+          return mapVisitor(row);
         }),
     },
     conversations: {
@@ -841,5 +919,20 @@ export function createDrizzleSupportDatabase(
       : postgres(options.connectionString, {
           max: options.maxConnections ?? 10,
         });
-  return createAdapter(drizzle(client, { schema }));
+  const database = drizzle(client, { schema });
+  const adapter = createAdapter(database);
+  return Object.assign(adapter, {
+    healthCheck: () =>
+      safe(async () => {
+        await database.execute(sql`select 1`);
+      }),
+    ...("client" in options
+      ? {}
+      : {
+          dispose: () =>
+            safe(async () => {
+              await client.end();
+            }),
+        }),
+  });
 }

@@ -7,7 +7,7 @@ import type {
   SupportRealtimeAdapter,
   SupportStorageAdapter,
 } from "./adapters.js";
-import { identifierSchema } from "./shared.js";
+import { identifierSchema, metadataSchema } from "./shared.js";
 
 /** Runtime schema for customer widget configuration. */
 export const widgetConfigSchema = z.strictObject({
@@ -44,48 +44,83 @@ export const securityConfigSchema = z.strictObject({
   maxUploadBytes: z.number().int().positive().max(104_857_600).optional(),
 });
 
+/** Runtime schema for explicit project provisioning behavior. */
+export const projectInitializationPolicySchema = z.discriminatedUnion("mode", [
+  z.strictObject({ mode: z.literal("require-existing") }),
+  z.strictObject({
+    mode: z.literal("create-if-missing"),
+    name: z.string().trim().min(1).max(200),
+    metadata: metadataSchema.optional(),
+  }),
+]);
+
+/** Runtime schema controlling ownership of configured adapter lifecycles. */
+export const lifecycleConfigSchema = z.strictObject({
+  adapterOwnership: z.enum(["host", "sdk"]).default("host"),
+});
+
 /** Runtime schema for the serializable portion of support configuration. */
 export const supportDeclarativeConfigSchema = z.strictObject({
-  projectId: identifierSchema,
+  projectKey: identifierSchema.regex(
+    /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?$/,
+    "Project key must contain only letters, numbers, dots, underscores, or hyphens.",
+  ),
+  projectInitialization: projectInitializationPolicySchema.default({
+    mode: "require-existing",
+  }),
   widget: widgetConfigSchema.optional(),
   features: featureFlagsSchema.optional(),
   security: securityConfigSchema,
+  lifecycle: lifecycleConfigSchema.default({ adapterOwnership: "host" }),
 });
 
 /** Runtime schema for the serializable portion of support configuration. */
 export const supportConfigSchema = supportDeclarativeConfigSchema;
 
-/** Customer widget configuration. */
 export type WidgetConfig = z.infer<typeof widgetConfigSchema>;
-/** Customer widget configuration using the blueprint's public name. */
 export type SupportWidgetConfig = WidgetConfig;
-/** Stable optional feature switches. */
 export type FeatureFlags = z.infer<typeof featureFlagsSchema>;
-/** Declarative security configuration. */
 export type SecurityConfig = z.infer<typeof securityConfigSchema>;
-/** Serializable support configuration validated by Zod. */
+export type ProjectInitializationPolicy = z.infer<
+  typeof projectInitializationPolicySchema
+>;
+export type LifecycleConfig = z.infer<typeof lifecycleConfigSchema>;
 export type SupportDeclarativeConfig = z.infer<
   typeof supportDeclarativeConfigSchema
 >;
 
 /** Complete provider-independent support configuration. */
-export interface SupportConfig extends SupportDeclarativeConfig {
+export interface SupportConfig extends Omit<
+  SupportDeclarativeConfig,
+  "projectInitialization" | "lifecycle"
+> {
+  readonly projectInitialization?: ProjectInitializationPolicy;
+  readonly lifecycle?: Partial<LifecycleConfig>;
   readonly auth: SupportAuthAdapter;
   readonly database: SupportDatabaseAdapter;
-  readonly realtime: SupportRealtimeAdapter;
+  readonly realtime?: SupportRealtimeAdapter;
   readonly storage?: SupportStorageAdapter;
   readonly notifications?: SupportNotificationAdapter;
   readonly ai?: SupportAIAdapter;
 }
 
 /** Validates declarative settings while preserving typed adapter instances. */
-export function defineSupportConfig(config: SupportConfig): SupportConfig {
+export function defineSupportConfig<TConfig extends SupportConfig>(
+  config: TConfig,
+): TConfig & SupportDeclarativeConfig {
   const declarative = supportDeclarativeConfigSchema.parse({
-    projectId: config.projectId,
+    projectKey: config.projectKey,
+    projectInitialization: config.projectInitialization,
     widget: config.widget,
     features: config.features,
     security: config.security,
+    lifecycle: config.lifecycle,
   });
-
+  if (declarative.features?.attachments && !config.storage)
+    throw new Error("Attachment features require a storage adapter.");
+  if (declarative.features?.attachments && !declarative.security.maxUploadBytes)
+    throw new Error("Attachment features require security.maxUploadBytes.");
+  if (declarative.features?.aiWriting && !config.ai)
+    throw new Error("AI writing requires an AI adapter.");
   return { ...config, ...declarative };
 }

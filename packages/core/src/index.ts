@@ -72,4 +72,5 @@ export type {
   SupportDatabaseAdapter,
   SupportRepository,
   TagRepository,
+  VisitorRepository,
 } from "./repositories.js";

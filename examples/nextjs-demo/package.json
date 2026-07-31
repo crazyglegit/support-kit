@@ -12,7 +12,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@crazyglegit/support": "workspace:*",
+    "@crazyglegit/support-db-drizzle": "workspace:*",
     "next": "16.2.12",
+    "postgres": "3.4.9",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },

@@ -1,39 +1,22 @@
 # Configuration API
 
-Consumers create configuration with `defineSupportConfig` from
-`@crazyglegit/support`.
+`defineSupportConfig` validates declarative configuration while preserving typed adapter objects. `projectKey` is the installation-facing identifier; callers never configure an internal UUID.
 
 ```ts
-import { defineSupportConfig } from "@crazyglegit/support";
-
-export default defineSupportConfig({
-  projectId: "main-app",
-  auth,
+const config = defineSupportConfig({
+  projectKey: "main-app",
+  projectInitialization: { mode: "require-existing" },
   database,
-  realtime,
-  widget: {
-    theme: "system",
-    allowAnonymousVisitors: true,
-  },
-  features: {
-    attachments: true,
-  },
+  auth,
   security: {
     allowedOrigins: ["https://app.example.com"],
     maxUploadBytes: 5_000_000,
   },
+  features: { attachments: false, aiWriting: false },
+  lifecycle: { adapterOwnership: "host" },
 });
 ```
 
-Zod validates only serializable configuration: `projectId`, widget settings,
-feature flags, allowed origins, and upload limits. Adapter objects are preserved
-by identity and checked by TypeScript against narrow provider-independent ports.
+Allowed origins must be exact URL origins. Uploads are limited to 100 MiB and enabling attachments requires both storage and an explicit upload limit. Enabling AI writing requires an AI adapter. Optional realtime, storage, notification, and AI adapters are never replaced by silent no-ops.
 
-`allowedOrigins` is required and accepts exact URL origins only. Route adapters
-must enforce it at their trust boundary. `maxUploadBytes` is optional and capped
-at 100 MiB; later storage and API adapters must also enforce this value rather
-than trusting client metadata.
-
-Optional storage, notification, and AI adapters should be provided only when the
-corresponding feature is enabled. Phase 2 defines these ports but supplies no
-implementations.
+Agent identities require an explicit support role and explicit permissions. The SDK never infers one from the other.

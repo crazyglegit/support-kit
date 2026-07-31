@@ -4,6 +4,7 @@ import {
   DomainError,
   isCustomerVisibleMessage,
   type Agent,
+  type AnonymousVisitor,
   type Conversation,
   type ConversationAssignment,
   type ConversationParticipant,
@@ -42,6 +43,7 @@ import type {
   SendMessageInput,
   UpsertAgentInput,
   UpsertCustomerInput,
+  UpsertVisitorInput,
 } from "./types.js";
 
 interface TransactionResult<TResult> {
@@ -610,6 +612,37 @@ export class UpsertAgent {
           ),
         ],
       };
+    });
+  }
+}
+
+/** Creates or refreshes a verified project-scoped visitor identity. */
+export class UpsertVisitor {
+  public constructor(private readonly dependencies: ApplicationDependencies) {}
+
+  public execute(input: UpsertVisitorInput): Promise<AnonymousVisitor> {
+    return transactional(this.dependencies, async (database) => {
+      requireValue(input.projectId, "projectId");
+      requireValue(input.externalVisitorId, "externalVisitorId");
+      const existing = await database.visitors.findByExternalId(
+        input.projectId,
+        input.externalVisitorId,
+      );
+      const now = this.dependencies.clock.now();
+      const visitor: AnonymousVisitor = {
+        id: existing?.id ?? this.dependencies.ids.generate(),
+        projectId: input.projectId,
+        externalVisitorId: input.externalVisitorId,
+        ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+        ...(input.name ? { name: input.name } : {}),
+        ...(input.email ? { email: input.email } : {}),
+        metadata: input.metadata ?? {},
+        lastSeenAt: now,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      };
+      await database.visitors.save(visitor);
+      return { result: visitor, events: [] };
     });
   }
 }

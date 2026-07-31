@@ -6,6 +6,18 @@ import type {
 } from "./identities.js";
 import type { RealtimeEventEnvelope } from "./realtime.js";
 
+/** Optional health result exposed by a host adapter without forcing network I/O. */
+export interface AdapterHealthResult {
+  readonly status: "healthy" | "unhealthy";
+  readonly message?: string;
+}
+
+/** Optional lifecycle capabilities shared by provider-neutral adapters. */
+export interface SupportAdapterLifecycle {
+  healthCheck?(): Promise<AdapterHealthResult>;
+  dispose?(): Promise<void>;
+}
+
 /** Provider-neutral request information passed to host authentication. */
 export interface SupportAuthContext {
   readonly method: string;
@@ -14,14 +26,14 @@ export interface SupportAuthContext {
 }
 
 /** Host-owned identity lookup boundary. */
-export interface SupportAuthAdapter {
+export interface SupportAuthAdapter extends SupportAdapterLifecycle {
   getCustomer(context: SupportAuthContext): Promise<CustomerIdentity | null>;
   getVisitor(context: SupportAuthContext): Promise<VisitorIdentity | null>;
   getAgent(context: SupportAuthContext): Promise<AgentIdentity | null>;
 }
 
 /** Provider-neutral realtime publishing and authorization boundary. */
-export interface SupportRealtimeAdapter {
+export interface SupportRealtimeAdapter extends SupportAdapterLifecycle {
   publish(channel: string, event: RealtimeEventEnvelope): Promise<void>;
   authorize(actorId: string, channel: string): Promise<boolean>;
   disconnectSession?(sessionId: string): Promise<void>;
@@ -43,7 +55,7 @@ export interface UploadTarget {
 }
 
 /** Provider-neutral private object storage boundary. */
-export interface SupportStorageAdapter {
+export interface SupportStorageAdapter extends SupportAdapterLifecycle {
   createUpload(input: CreateUploadInput): Promise<UploadTarget>;
   createDownloadUrl(fileId: string): Promise<string>;
   deleteFile(fileId: string): Promise<void>;
@@ -58,7 +70,7 @@ export interface SupportNotification {
 }
 
 /** Provider-neutral notification delivery boundary. */
-export interface SupportNotificationAdapter {
+export interface SupportNotificationAdapter extends SupportAdapterLifecycle {
   notifyAgent(notification: SupportNotification): Promise<void>;
   notifyCustomer(notification: SupportNotification): Promise<void>;
 }
@@ -76,7 +88,7 @@ export interface SupportAIDraftResult {
 }
 
 /** Narrow boundary for optional agent-controlled AI drafting. */
-export interface SupportAIAdapter {
+export interface SupportAIAdapter extends SupportAdapterLifecycle {
   generateDraft(input: SupportAIDraftInput): Promise<SupportAIDraftResult>;
 }
 

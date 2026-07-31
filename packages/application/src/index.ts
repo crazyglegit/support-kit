@@ -16,6 +16,7 @@ export {
   SendMessage,
   UpsertAgent,
   UpsertCustomer,
+  UpsertVisitor,
 } from "./use-cases.js";
 export type {
   AddInternalNoteInput,
@@ -41,4 +42,5 @@ export type {
   SendMessageInput,
   UpsertAgentInput,
   UpsertCustomerInput,
+  UpsertVisitorInput,
 } from "./types.js";

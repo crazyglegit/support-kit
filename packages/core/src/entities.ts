@@ -36,10 +36,12 @@ export interface Customer extends ProjectScopedEntity {
 
 /** An unauthenticated visitor represented by a verified support session. */
 export interface AnonymousVisitor extends ProjectScopedEntity {
-  readonly sessionId: string;
+  readonly externalVisitorId: string;
+  readonly sessionId?: string;
   readonly name?: string;
   readonly email?: string;
   readonly metadata: Readonly<Record<string, unknown>>;
+  readonly lastSeenAt: Date;
 }
 
 /** A support agent backed by an identity from the host application. */

@@ -11,8 +11,10 @@ export type {
   ApiSuccessEnvelope,
 } from "./api.js";
 export type {
+  AdapterHealthResult,
   CreateUploadInput,
   SupportAIAdapter,
+  SupportAdapterLifecycle,
   SupportAIDraftInput,
   SupportAIDraftResult,
   SupportAuthAdapter,
@@ -27,6 +29,8 @@ export type {
 export {
   defineSupportConfig,
   featureFlagsSchema,
+  lifecycleConfigSchema,
+  projectInitializationPolicySchema,
   securityConfigSchema,
   supportConfigSchema,
   supportDeclarativeConfigSchema,
@@ -34,6 +38,8 @@ export {
 } from "./config.js";
 export type {
   FeatureFlags,
+  LifecycleConfig,
+  ProjectInitializationPolicy,
   SecurityConfig,
   SupportConfig,
   SupportDeclarativeConfig,

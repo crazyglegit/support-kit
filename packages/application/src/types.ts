@@ -1,5 +1,6 @@
 import type {
   Agent,
+  AnonymousVisitor,
   Conversation,
   ConversationStatus,
   Customer,
@@ -145,6 +146,16 @@ export interface UpsertAgentInput {
   readonly permissions: readonly SupportPermission[];
 }
 
+/** Input for provisioning a verified anonymous visitor. */
+export interface UpsertVisitorInput {
+  readonly projectId: string;
+  readonly externalVisitorId: string;
+  readonly sessionId?: string;
+  readonly name?: string;
+  readonly email?: string;
+  readonly metadata?: Readonly<Record<string, unknown>>;
+}
+
 /** Input for listing conversations owned by a customer or visitor. */
 export interface ListCustomerConversationsInput {
   readonly projectId: string;
@@ -173,4 +184,12 @@ export interface ConversationTagInput {
   readonly actor: AgentActor;
 }
 
-export type { Agent, Conversation, Customer, Message, MessageReceipt, Tag };
+export type {
+  Agent,
+  AnonymousVisitor,
+  Conversation,
+  Customer,
+  Message,
+  MessageReceipt,
+  Tag,
+};

@@ -50,6 +50,7 @@ describe("identity contracts", () => {
       agentIdentitySchema.safeParse({
         id: "agent-1",
         name: "Support Agent",
+        role: "support_agent",
         permissions: ["conversation.read", "conversation.reply"],
       }).success,
     ).toBe(true);
@@ -76,12 +77,12 @@ describe("configuration contract", () => {
     publish: () => Promise.resolve(),
   };
   const config: SupportConfig = {
-    projectId: "main-app",
+    projectKey: "main-app",
     auth,
     database,
     realtime,
     widget: { theme: "system", allowAnonymousVisitors: true },
-    features: { attachments: true },
+    features: { attachments: false },
     security: {
       allowedOrigins: ["https://example.com"],
       maxUploadBytes: 5_000_000,
@@ -94,11 +95,11 @@ describe("configuration contract", () => {
     expect(result.auth).toBe(auth);
     expect(result.database).toBe(database);
     expect(result.realtime).toBe(realtime);
-    expect(result.projectId).toBe("main-app");
+    expect(result.projectKey).toBe("main-app");
   });
 
   it("rejects invalid declarative configuration", () => {
-    expect(() => defineSupportConfig({ ...config, projectId: "" })).toThrow();
+    expect(() => defineSupportConfig({ ...config, projectKey: "" })).toThrow();
     expect(() =>
       defineSupportConfig({
         ...config,

@@ -9,7 +9,7 @@
 ## Tables
 
 - `support_projects`: installation identity and controlled configuration metadata.
-- `support_customers` and `support_agents`: project-scoped references to host identities.
+- `support_customers`, `support_visitors`, and `support_agents`: project-scoped references to verified host identities.
 - `support_customer_sessions`: hashed customer or anonymous-session references; it is not an authentication system.
 - `support_conversations` and `support_conversation_participants`: lifecycle state and ownership/membership.
 - `support_conversation_assignments`: append-only assignment history. The adapter permits only the one-way addition of `unassigned_at` to an existing record.

@@ -24,7 +24,9 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@crazyglegit/support-contracts": "workspace:*"
+    "@crazyglegit/support-application": "workspace:*",
+    "@crazyglegit/support-contracts": "workspace:*",
+    "@crazyglegit/support-core": "workspace:*"
   },
   "publishConfig": {
     "access": "restricted"

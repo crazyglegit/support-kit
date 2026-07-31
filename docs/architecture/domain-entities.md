@@ -13,7 +13,9 @@ changing the message's independent delivery status.
 
 Customer and agent entities reference the host's identities through
 `externalCustomerId` and `externalAgentId`; they do not reproduce the host user
-record. Attachments contain safe metadata only and do not contain provider keys
+record. Visitors retain a stable internal UUID and verified
+`externalVisitorId`; they are never implicitly merged into customers.
+Attachments contain safe metadata only and do not contain provider keys
 or public URLs. Audit events are immutable records at the application boundary.
 
 Transport representations belong in `@crazyglegit/support-contracts`. Database

@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { metadataSchema, identifierSchema } from "./shared.js";
 import { permissionSchema } from "./enums.js";
+const agentRoleSchema = z.enum([
+  "support_admin",
+  "support_supervisor",
+  "support_agent",
+  "support_viewer",
+]);
 
 const optionalEmailSchema = z.email().max(320).optional();
 const optionalNameSchema = z.string().trim().min(1).max(200).optional();
@@ -27,6 +33,7 @@ export const agentIdentitySchema = z.strictObject({
   id: identifierSchema,
   name: z.string().trim().min(1).max(200),
   email: optionalEmailSchema,
+  role: agentRoleSchema,
   permissions: z.array(permissionSchema).readonly(),
 });
 

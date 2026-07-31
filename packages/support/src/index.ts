@@ -1,14 +1,54 @@
-/** Defines and validates provider-independent support configuration. */
+export { createSupportKit } from "./sdk.js";
+export {
+  isSupportKitError,
+  SUPPORT_KIT_ERROR_CODES,
+  SupportKitError,
+} from "./errors.js";
+export type { SupportKitErrorCode } from "./errors.js";
 export { defineSupportConfig } from "@crazyglegit/support-contracts";
 export type {
+  AdapterHealthResult,
+  AgentIdentity,
+  CustomerIdentity,
   FeatureFlags,
+  LifecycleConfig,
+  ProjectInitializationPolicy,
   SecurityConfig,
   SupportAIAdapter,
   SupportAuthAdapter,
-  SupportConfig,
+  SupportAuthContext,
   SupportDatabaseAdapter,
   SupportNotificationAdapter,
   SupportRealtimeAdapter,
   SupportStorageAdapter,
+  VisitorIdentity,
   WidgetConfig,
 } from "@crazyglegit/support-contracts";
+export type {
+  AddInternalNoteOperationInput,
+  AssignConversationOperationInput,
+  ChangeConversationStatusOperationInput,
+  ConversationTagOperationInput,
+  CreateConversationOperationInput,
+  HealthCheckResult,
+  HealthCheckStatus,
+  HealthStatus,
+  ListAgentInboxOperationInput,
+  ListConversationMessagesOperationInput,
+  ListCustomerConversationsOperationInput,
+  MarkConversationSpamOperationInput,
+  RecordMessageReadOperationInput,
+  ReopenConversationOperationInput,
+  SendMessageOperationInput,
+  SupportAgentOperations,
+  SupportAuthOperations,
+  SupportConversationOperations,
+  SupportCustomerOperations,
+  SupportKit,
+  SupportKitConfig,
+  SupportKitHealth,
+  SupportMessageOperations,
+  SupportTagOperations,
+  UpsertAgentOperationInput,
+  UpsertCustomerOperationInput,
+} from "./types.js";

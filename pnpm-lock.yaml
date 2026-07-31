@@ -50,9 +50,18 @@ importers:
 
   examples/nextjs-demo:
     dependencies:
+      '@crazyglegit/support':
+        specifier: workspace:*
+        version: link:../../packages/support
+      '@crazyglegit/support-db-drizzle':
+        specifier: workspace:*
+        version: link:../../packages/db-drizzle
       next:
         specifier: 16.2.12
         version: 16.2.12(@playwright/test@1.62.1)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      postgres:
+        specifier: 3.4.9
+        version: 3.4.9
       react:
         specifier: 19.2.8
         version: 19.2.8
@@ -102,6 +111,9 @@ importers:
         specifier: 3.4.9
         version: 3.4.9
     devDependencies:
+      '@crazyglegit/support':
+        specifier: workspace:*
+        version: link:../support
       '@testcontainers/postgresql':
         specifier: 12.0.4
         version: 12.0.4
@@ -127,9 +139,15 @@ importers:
 
   packages/support:
     dependencies:
+      '@crazyglegit/support-application':
+        specifier: workspace:*
+        version: link:../application
       '@crazyglegit/support-contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@crazyglegit/support-core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/widget: {}
 

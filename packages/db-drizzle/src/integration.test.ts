@@ -9,6 +9,7 @@ import {
   DomainError,
   type SupportDatabaseAdapter,
 } from "@crazyglegit/support-core";
+import { createSupportKit } from "@crazyglegit/support";
 import { createDrizzleSupportDatabase } from "./database.js";
 import { runSupportMigrations } from "./migrate.js";
 
@@ -64,6 +65,7 @@ describe.sequential("PostgreSQL Drizzle adapter", () => {
       expect.arrayContaining([
         "support_projects",
         "support_customers",
+        "support_visitors",
         "support_customer_sessions",
         "support_agents",
         "support_conversations",
@@ -116,6 +118,68 @@ describe.sequential("PostgreSQL Drizzle adapter", () => {
         updatedAt: now,
       }),
     ).resolves.toMatchObject({ id: customerId });
+  });
+
+  it("provisions visitors idempotently with project isolation", async () => {
+    const firstProject = await project("visitor-first");
+    const secondProject = await project("visitor-second");
+    const first = await database.visitors.save({
+      id: randomUUID(),
+      projectId: firstProject,
+      externalVisitorId: "verified-visitor",
+      sessionId: "verified-session",
+      metadata: {},
+      lastSeenAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const repeated = await database.visitors.save({
+      ...first,
+      id: randomUUID(),
+      lastSeenAt: new Date(now.getTime() + 1),
+      updatedAt: new Date(now.getTime() + 1),
+    });
+    const other = await database.visitors.save({
+      ...first,
+      id: randomUUID(),
+      projectId: secondProject,
+    });
+    expect(repeated.id).toBe(first.id);
+    expect(other.id).not.toBe(first.id);
+    expect(
+      await database.visitors.findById({
+        projectId: secondProject,
+        id: first.id,
+      }),
+    ).toBeNull();
+  });
+
+  it("composes the SDK with Drizzle and resolves a verified visitor", async () => {
+    const projectId = await project("sdk-drizzle");
+    const support = await createSupportKit({
+      projectKey: "sdk-drizzle",
+      database,
+      auth: {
+        getCustomer: () => Promise.resolve(null),
+        getAgent: () => Promise.resolve(null),
+        getVisitor: () =>
+          Promise.resolve({
+            id: "verified-sdk-visitor",
+            sessionId: "verified-sdk-session",
+          }),
+      },
+      security: { allowedOrigins: ["https://example.com"] },
+    });
+    const actor = await support.auth.resolveVisitor({
+      method: "GET",
+      url: "https://example.com",
+      headers: {},
+    });
+    expect(support.projectId).toBe(projectId);
+    expect(
+      await database.visitors.findById({ projectId, id: actor.id }),
+    ).toMatchObject({ externalVisitorId: "verified-sdk-visitor" });
+    await support.dispose();
   });
 
   it("persists conversations, participants, inbox assignments, messages, notes, and receipts idempotently", async () => {

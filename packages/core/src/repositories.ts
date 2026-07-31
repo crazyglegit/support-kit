@@ -1,5 +1,6 @@
 import type {
   Agent,
+  AnonymousVisitor,
   AttachmentMetadata,
   AuditEvent,
   Conversation,
@@ -51,6 +52,14 @@ export interface AgentRepository extends SupportRepository<Agent> {
     projectId: string,
     externalAgentId: string,
   ): Promise<Agent | null>;
+}
+
+/** Project-scoped verified visitor repository port. */
+export interface VisitorRepository extends SupportRepository<AnonymousVisitor> {
+  findByExternalId(
+    projectId: string,
+    externalVisitorId: string,
+  ): Promise<AnonymousVisitor | null>;
 }
 
 /** Project-scoped conversation repository port. */
@@ -136,6 +145,7 @@ export interface SupportDatabaseAdapter {
   readonly projects: ProjectRepository;
   readonly customers: CustomerRepository;
   readonly agents: AgentRepository;
+  readonly visitors: VisitorRepository;
   readonly conversations: ConversationRepository;
   readonly participants: ConversationParticipantRepository;
   readonly assignments: ConversationAssignmentRepository;
@@ -149,4 +159,6 @@ export interface SupportDatabaseAdapter {
   transaction<TResult>(
     operation: (database: SupportDatabaseAdapter) => Promise<TResult>,
   ): Promise<TResult>;
+  healthCheck?(): Promise<void>;
+  dispose?(): Promise<void>;
 }
