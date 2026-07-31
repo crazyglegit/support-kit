@@ -1,7 +1,7 @@
 {
   "name": "@crazyglegit/support-nextjs",
   "version": "0.0.0",
-  "description": "Next.js App Router adapter foundation for Support Kit",
+  "description": "Next.js App Router HTTP adapter for Support Kit",
   "type": "module",
   "sideEffects": false,
   "files": [
@@ -22,6 +22,11 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "dependencies": {
+    "@crazyglegit/support": "workspace:*",
+    "@crazyglegit/support-contracts": "workspace:*",
+    "zod": "^4.0.10"
   },
   "publishConfig": {
     "access": "restricted"

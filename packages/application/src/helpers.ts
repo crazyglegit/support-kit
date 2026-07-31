@@ -67,6 +67,18 @@ export function requirePermission(
   }
 }
 
+/** Requires the internal agent actor to exist in the active project. */
+export async function requireProjectAgent(
+  database: SupportDatabaseAdapter,
+  projectId: string,
+  actor: AgentActor,
+): Promise<void> {
+  requireValue(projectId, "projectId");
+  requireValue(actor.id, "actor.id");
+  const agent = await database.agents.findById({ projectId, id: actor.id });
+  if (!agent) throw new DomainError("NOT_FOUND", "Agent was not found.");
+}
+
 export async function requireConversation(
   database: SupportDatabaseAdapter,
   projectId: string,
@@ -126,6 +138,7 @@ export async function requireConversationAccess(
   );
   if (actor.type === "agent") {
     requirePermission(actor, agentPermission);
+    await requireProjectAgent(database, projectId, actor);
   } else {
     await requireOwnership(database, projectId, conversationId, actor);
   }

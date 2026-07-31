@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true
+  },
+  "include": [
+    "tests/**/*.ts",
+    "playwright.config.ts",
+    "vitest.integration.config.ts",
+    "vitest.workspace.config.ts"
+  ]
+}

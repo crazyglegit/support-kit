@@ -1,4 +1,3 @@
-import postgres from "postgres";
 import {
   createSupportKit,
   defineSupportConfig,
@@ -12,23 +11,28 @@ const auth: SupportAuthAdapter = {
   getAgent: () => Promise.resolve(null),
 };
 
-/** Minimal server-side composition example; it does not create routes or UI. */
-export async function inspectSupportHealth(databaseUrl: string) {
-  const client = postgres(databaseUrl);
-  const database = createDrizzleSupportDatabase({ client });
-  const config = defineSupportConfig({
+/** Creates the demo's server-side Support Kit configuration. */
+export function createDemoSupportConfig(databaseUrl: string) {
+  const database = createDrizzleSupportDatabase({
+    connectionString: databaseUrl,
+  });
+  return defineSupportConfig({
     projectKey: "main-app",
     projectInitialization: { mode: "require-existing" },
     database,
     auth,
     security: { allowedOrigins: ["https://example.com"] },
-    lifecycle: { adapterOwnership: "host" },
+    lifecycle: { adapterOwnership: "sdk" },
   });
+}
+
+/** Minimal server-side composition health example. */
+export async function inspectSupportHealth(databaseUrl: string) {
+  const config = createDemoSupportConfig(databaseUrl);
   const support = await createSupportKit(config);
   try {
     return await support.healthCheck();
   } finally {
     await support.dispose();
-    await client.end();
   }
 }

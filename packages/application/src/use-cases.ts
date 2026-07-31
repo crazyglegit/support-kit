@@ -21,6 +21,7 @@ import {
   requireConversation,
   requireConversationAccess,
   requirePermission,
+  requireProjectAgent,
   requireValue,
   runtimeActorType,
   safely,
@@ -263,6 +264,7 @@ export class AddInternalNote {
   public execute(input: AddInternalNoteInput): Promise<Message> {
     return transactional(this.dependencies, async (database) => {
       requirePermission(input.actor, "internal_note.create");
+      await requireProjectAgent(database, input.projectId, input.actor);
       await requireConversation(
         database,
         input.projectId,
@@ -322,6 +324,7 @@ export class AssignConversation {
   ): Promise<ConversationAssignment> {
     return transactional(this.dependencies, async (database) => {
       requirePermission(input.actor, "conversation.assign");
+      await requireProjectAgent(database, input.projectId, input.actor);
       requireValue(input.agentId, "agentId");
       await requireConversation(
         database,
@@ -398,6 +401,7 @@ export class ChangeConversationStatus {
   public execute(input: ChangeConversationStatusInput): Promise<Conversation> {
     return transactional(this.dependencies, async (database) => {
       requirePermission(input.actor, statusPermission(input.status));
+      await requireProjectAgent(database, input.projectId, input.actor);
       const conversation = await requireConversation(
         database,
         input.projectId,
@@ -673,6 +677,11 @@ export class ListAgentInbox {
       requireValue(input.projectId, "projectId");
       requireValue(input.actor.id, "actor.id");
       requirePermission(input.actor, "conversation.read");
+      await requireProjectAgent(
+        this.dependencies.database,
+        input.projectId,
+        input.actor,
+      );
       return this.dependencies.database.conversations.listInbox(
         input.projectId,
         input.assignedToAgentId,
@@ -717,6 +726,7 @@ async function changeTag(
   return transactional(dependencies, async (database) => {
     requireValue(input.tagId, "tagId");
     requirePermission(input.actor, "conversation.assign");
+    await requireProjectAgent(database, input.projectId, input.actor);
     await requireConversation(database, input.projectId, input.conversationId);
     const tag = await database.tags.findById({
       projectId: input.projectId,
