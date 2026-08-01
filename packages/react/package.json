@@ -1,7 +1,7 @@
 {
   "name": "@crazyglegit/support-react",
   "version": "0.0.0",
-  "description": "Public React integration foundation for Support Kit",
+  "description": "React integrations for the prebuilt Support Kit widget and dashboard",
   "type": "module",
   "sideEffects": false,
   "files": [
@@ -17,11 +17,25 @@
     "build": "tsc -p tsconfig.build.json",
     "clean": "rimraf dist tsconfig.tsbuildinfo",
     "lint": "eslint src --max-warnings 0",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "engines": {
     "node": ">=22"
+  },
+  "dependencies": {
+    "@crazyglegit/support-dashboard": "workspace:*",
+    "@crazyglegit/support-widget": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": ">=18 <20"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "happy-dom": "18.0.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
   },
   "publishConfig": {
     "access": "restricted"

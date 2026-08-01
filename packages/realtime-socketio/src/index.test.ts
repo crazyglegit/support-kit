@@ -546,6 +546,18 @@ describe("Socket.IO realtime adapter", () => {
       await acknowledged(agent, "message.read", { messageId }),
     ).toMatchObject({ ok: true, data: { created: true } });
 
+    const customerReply = event(customer, "message.created");
+    expect(
+      await acknowledged(agent, "message.send", {
+        conversationId: CONVERSATION_A,
+        body: "agent reply",
+        clientMessageId: "agent-message-0001",
+      }),
+    ).toMatchObject({ ok: true, data: { created: true } });
+    expect(await customerReply).toMatchObject({
+      data: { body: "agent reply", senderType: "agent" },
+    });
+
     harness.persistenceFails = true;
     const noBroadcast = vi.fn();
     agent.once("message.created", noBroadcast);

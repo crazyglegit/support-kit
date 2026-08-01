@@ -11,6 +11,7 @@ import { identifierSchema, metadataSchema } from "./shared.js";
 
 /** Runtime schema for customer widget configuration. */
 export const widgetConfigSchema = z.strictObject({
+  title: z.string().trim().min(1).max(100).optional(),
   position: z.enum(["bottom-left", "bottom-right"]).optional(),
   theme: z.enum(["light", "dark", "system"]).optional(),
   accentColor: z

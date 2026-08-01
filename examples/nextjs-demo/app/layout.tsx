@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import "./styles.css";
+import { DemoSupportWidget } from "./support-widget";
 
 export const metadata: Metadata = {
   description: "Minimal host application for the Support Kit monorepo",
@@ -12,7 +13,10 @@ export default function RootLayout({
 }: Readonly<{ children: ReactNode }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        {children}
+        <DemoSupportWidget />
+      </body>
     </html>
   );
 }

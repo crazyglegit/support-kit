@@ -112,6 +112,16 @@ export {
   supportSocketServerEventSchema,
   typingSchema,
 } from "./realtime.js";
+export {
+  customerConversationSchema,
+  customerMessageSchema,
+  publicWidgetConfigurationSchema,
+} from "./widget.js";
+export type {
+  CustomerConversation,
+  CustomerMessage,
+  PublicWidgetConfiguration,
+} from "./widget.js";
 export type {
   RealtimeEventEnvelope,
   SupportRealtimeEvent,

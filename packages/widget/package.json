@@ -1,7 +1,7 @@
 {
   "name": "@crazyglegit/support-widget",
   "version": "0.0.0",
-  "description": "Customer widget package foundation for Support Kit",
+  "description": "Prebuilt isolated customer widget for Support Kit",
   "type": "module",
   "sideEffects": false,
   "files": [
@@ -17,13 +17,22 @@
     "build": "tsc -p tsconfig.build.json",
     "clean": "rimraf dist tsconfig.tsbuildinfo",
     "lint": "eslint src --max-warnings 0",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
+    "size": "pnpm build && node -e \"const fs=require('node:fs'),z=require('node:zlib'),files=fs.readdirSync('dist').filter(f=>f.endsWith('.js')&&!f.includes('.test.')),b=Buffer.concat(files.map(f=>fs.readFileSync('dist/'+f)));console.log(JSON.stringify({scope:'emitted widget modules; dependencies external',files,bytes:b.length,gzipBytes:z.gzipSync(b).length}))\"",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "engines": {
     "node": ">=22"
   },
+  "dependencies": {
+    "@crazyglegit/support-contracts": "workspace:*",
+    "socket.io-client": "^4.8.1",
+    "zod": "^4.0.14"
+  },
   "publishConfig": {
     "access": "restricted"
+  },
+  "devDependencies": {
+    "happy-dom": "18.0.1"
   }
 }

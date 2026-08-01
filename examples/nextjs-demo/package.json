@@ -15,6 +15,7 @@
     "@crazyglegit/support": "workspace:*",
     "@crazyglegit/support-db-drizzle": "workspace:*",
     "@crazyglegit/support-nextjs": "workspace:*",
+    "@crazyglegit/support-react": "workspace:*",
     "@crazyglegit/support-realtime-socketio": "workspace:*",
     "next": "16.2.12",
     "postgres": "3.4.9",

@@ -6,9 +6,47 @@ import {
 import { createDrizzleSupportDatabase } from "@crazyglegit/support-db-drizzle";
 
 const auth: SupportAuthAdapter = {
-  getCustomer: () => Promise.resolve(null),
-  getVisitor: () => Promise.resolve(null),
-  getAgent: () => Promise.resolve(null),
+  getCustomer: (context) => {
+    const customer = context.headers["x-demo-customer-id"];
+    return Promise.resolve(
+      customer ? { id: customer, name: "Demo customer" } : null,
+    );
+  },
+  // Demo-only host verification. Production hosts must verify a signed visitor session.
+  getVisitor: () =>
+    Promise.resolve({
+      id: "nextjs-demo-visitor",
+      sessionId: "verified-demo-session",
+    }),
+  // Example-only host boundary: the host sets an HttpOnly cookie equal to its
+  // development secret. Production applications must use their real session.
+  getAgent: (context) => {
+    const secret = process.env.SUPPORT_DEMO_AGENT_SECRET;
+    const cookie = context.headers.cookie ?? "";
+    if (
+      !secret ||
+      !cookie
+        .split(";")
+        .some((part) => part.trim() === `support_demo_agent=${secret}`)
+    )
+      return Promise.resolve(null);
+    return Promise.resolve({
+      id: "demo-agent",
+      name: "Demo agent",
+      role: "support_agent",
+      permissions: [
+        "conversation.read",
+        "conversation.reply",
+        "conversation.assign",
+        "conversation.close",
+        "conversation.reopen",
+        "conversation.mark_spam",
+        "internal_note.read",
+        "internal_note.create",
+        "customer.read",
+      ],
+    });
+  },
 };
 
 /** Creates the demo's server-side Support Kit configuration. */
@@ -21,7 +59,12 @@ export function createDemoSupportConfig(databaseUrl: string) {
     projectInitialization: { mode: "require-existing" },
     database,
     auth,
-    security: { allowedOrigins: ["https://example.com"] },
+    widget: { title: "Demo support", greeting: "How can we help?" },
+    security: {
+      allowedOrigins: [
+        process.env.NEXT_PUBLIC_APP_ORIGIN ?? "http://127.0.0.1:3000",
+      ],
+    },
     lifecycle: { adapterOwnership: "sdk" },
   });
 }

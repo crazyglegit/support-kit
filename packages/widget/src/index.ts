@@ -1,2 +1,10 @@
-/** Package boundary for the customer-facing widget. */
-export const SUPPORT_WIDGET_PACKAGE = "@crazyglegit/support-widget" as const;
+export { createSupportWidget, SupportWidgetController } from "./controller.js";
+export type {
+  SupportWidgetEvent,
+  SupportWidgetEventName,
+  SupportWidgetOptions,
+  SupportWidgetPosition,
+  SupportWidgetStrings,
+  SupportWidgetTheme,
+  SupportWidgetThemeVariables,
+} from "./types.js";

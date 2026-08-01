@@ -1,3 +1,13 @@
-/** Package boundary for the agent dashboard. */
-export const SUPPORT_DASHBOARD_PACKAGE =
-  "@crazyglegit/support-dashboard" as const;
+export {
+  createSupportDashboard,
+  SupportDashboardController,
+} from "./controller.js";
+export type {
+  SupportDashboardEvent,
+  SupportDashboardEventName,
+  SupportDashboardFilters,
+  SupportDashboardLayout,
+  SupportDashboardOptions,
+  SupportDashboardStrings,
+  SupportDashboardTheme,
+} from "./types.js";

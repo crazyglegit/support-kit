@@ -7,6 +7,10 @@ import {
 import {
   apiErrorEnvelopeSchema,
   conversationStatusSchema,
+  type CustomerConversation,
+  type CustomerMessage,
+  type FeatureFlags,
+  type WidgetConfig,
 } from "@crazyglegit/support-contracts";
 import { z } from "zod";
 
@@ -67,6 +71,80 @@ function json(data: unknown, status = 200, requestId?: string): Response {
 
 function success(data: unknown, status = 200, requestId?: string): Response {
   return json({ success: true, data }, status, requestId);
+}
+
+function customerConversation(
+  conversation: Awaited<
+    ReturnType<SupportKit["conversations"]["listForCustomer"]>
+  >[number],
+): CustomerConversation {
+  return {
+    id: conversation.id,
+    status: conversation.status,
+    ...(conversation.subject ? { subject: conversation.subject } : {}),
+    createdAt: conversation.createdAt.toISOString(),
+    updatedAt: conversation.updatedAt.toISOString(),
+  };
+}
+
+function customerMessage(
+  message: Awaited<ReturnType<SupportKit["messages"]["list"]>>[number],
+): CustomerMessage | undefined {
+  if (message.type === "internal_note") return undefined;
+  return {
+    id: message.id,
+    conversationId: message.conversationId,
+    ...(message.clientMessageId
+      ? { clientMessageId: message.clientMessageId }
+      : {}),
+    type: message.type,
+    senderType: message.senderType,
+    body: message.body,
+    deliveryStatus: message.deliveryStatus,
+    createdAt: message.createdAt.toISOString(),
+    updatedAt: message.updatedAt.toISOString(),
+  };
+}
+
+function customerMessages(
+  messages: Awaited<ReturnType<SupportKit["messages"]["list"]>>,
+): readonly CustomerMessage[] {
+  return messages.flatMap((message) => {
+    const serialized = customerMessage(message);
+    return serialized ? [serialized] : [];
+  });
+}
+
+function agentConversation(
+  conversation: Awaited<
+    ReturnType<SupportKit["conversations"]["listInbox"]>
+  >[number],
+) {
+  return {
+    id: conversation.id,
+    status: conversation.status,
+    ...(conversation.subject ? { subject: conversation.subject } : {}),
+    createdAt: conversation.createdAt.toISOString(),
+    updatedAt: conversation.updatedAt.toISOString(),
+  };
+}
+
+function agentMessage(
+  message: Awaited<ReturnType<SupportKit["messages"]["list"]>>[number],
+) {
+  return {
+    id: message.id,
+    conversationId: message.conversationId,
+    ...(message.clientMessageId
+      ? { clientMessageId: message.clientMessageId }
+      : {}),
+    type: message.type,
+    senderType: message.senderType,
+    body: message.body,
+    deliveryStatus: message.deliveryStatus,
+    createdAt: message.createdAt.toISOString(),
+    updatedAt: message.updatedAt.toISOString(),
+  };
 }
 
 function errorResponse(
@@ -188,26 +266,82 @@ function statusFor(code: string): number {
 async function dispatch(
   support: SupportKit,
   request: Request,
+  publicConfiguration: {
+    readonly widget?: WidgetConfig;
+    readonly features?: FeatureFlags;
+  },
 ): Promise<Response> {
   const parts = pathParts(request);
   const method = request.method as RouteMethod;
+
+  if (
+    method === "GET" &&
+    parts.length === 2 &&
+    parts[0] === "widget" &&
+    parts[1] === "config"
+  ) {
+    return success({
+      ...(publicConfiguration.widget?.title
+        ? { title: publicConfiguration.widget.title }
+        : {}),
+      ...(publicConfiguration.widget?.greeting
+        ? { greeting: publicConfiguration.widget.greeting }
+        : {}),
+      ...(publicConfiguration.widget?.launcherLabel
+        ? { launcherLabel: publicConfiguration.widget.launcherLabel }
+        : {}),
+      ...(publicConfiguration.widget?.position
+        ? { position: publicConfiguration.widget.position }
+        : {}),
+      ...(publicConfiguration.widget?.theme
+        ? { theme: publicConfiguration.widget.theme }
+        : {}),
+      ...(publicConfiguration.widget?.accentColor
+        ? { accentColor: publicConfiguration.widget.accentColor }
+        : {}),
+      ...(publicConfiguration.widget?.locale
+        ? { locale: publicConfiguration.widget.locale }
+        : {}),
+      features: {
+        attachments: publicConfiguration.features?.attachments === true,
+        chatbot: publicConfiguration.features?.chatbot === true,
+      },
+    });
+  }
 
   if (method === "POST" && parts.length === 1 && parts[0] === "session") {
     const actor = await customerActor(support, request);
     return success({ actor });
   }
+  if (
+    method === "POST" &&
+    parts.length === 2 &&
+    parts[0] === "agent" &&
+    parts[1] === "session"
+  ) {
+    const actor = await support.auth.resolveAgent(authContext(request));
+    return success({ actor });
+  }
   if (parts[0] === "conversations") {
     const actor = await customerActor(support, request);
     if (method === "GET" && parts.length === 1)
-      return success(await support.conversations.listForCustomer({ actor }));
+      return success(
+        (await support.conversations.listForCustomer({ actor })).map(
+          customerConversation,
+        ),
+      );
     if (method === "POST" && parts.length === 1) {
       const input = await body(request, createConversationSchema);
+      const created = await support.conversations.create({
+        actor,
+        initialMessage: input.initialMessage,
+        ...(input.subject ? { subject: input.subject } : {}),
+      });
       return success(
-        await support.conversations.create({
-          actor,
-          initialMessage: input.initialMessage,
-          ...(input.subject ? { subject: input.subject } : {}),
-        }),
+        {
+          conversation: customerConversation(created.conversation),
+          initialMessage: customerMessage(created.message),
+        },
         201,
       );
     }
@@ -225,23 +359,25 @@ async function dispatch(
           "The conversation was not found.",
           404,
         );
-      return success({ conversation });
+      return success({ conversation: customerConversation(conversation) });
     }
     if (conversationId && parts[2] === "messages" && parts.length === 3) {
       if (method === "GET")
-        return success(await support.messages.list({ conversationId, actor }));
+        return success(
+          customerMessages(
+            await support.messages.list({ conversationId, actor }),
+          ),
+        );
       if (method === "POST") {
         const input = await body(request, sendMessageSchema);
-        return success(
-          await support.conversations.sendMessage({
-            body: input.body,
-            clientMessageId: input.clientMessageId,
-            conversationId,
-            actor,
-            ...(input.type ? { type: input.type } : {}),
-          }),
-          201,
-        );
+        const sent = await support.conversations.sendMessage({
+          body: input.body,
+          clientMessageId: input.clientMessageId,
+          conversationId,
+          actor,
+          ...(input.type ? { type: input.type } : {}),
+        });
+        return success(customerMessage(sent), 201);
       }
     }
   }
@@ -255,14 +391,20 @@ async function dispatch(
   if (parts[0] === "agent" && parts[1] === "conversations") {
     const actor = await support.auth.resolveAgent(authContext(request));
     if (method === "GET" && parts.length === 2) {
-      const assignedToAgentId = new URL(request.url).searchParams.get(
-        "assignedToAgentId",
-      );
+      const assignment = new URL(request.url).searchParams.get("assignment");
+      if (assignment !== null && assignment !== "mine")
+        throw new HttpError(
+          "VALIDATION_ERROR",
+          "The assignment filter is invalid.",
+          400,
+        );
       return success(
-        await support.conversations.listInbox({
-          actor,
-          ...(assignedToAgentId ? { assignedToAgentId } : {}),
-        }),
+        (
+          await support.conversations.listInbox({
+            actor,
+            ...(assignment === "mine" ? { assignedToAgentId: actor.id } : {}),
+          })
+        ).map(agentConversation),
       );
     }
     const conversationId = parts[2];
@@ -278,8 +420,10 @@ async function dispatch(
           404,
         );
       return success({
-        conversation,
-        messages: await support.messages.list({ conversationId, actor }),
+        conversation: agentConversation(conversation),
+        messages: (await support.messages.list({ conversationId, actor })).map(
+          agentMessage,
+        ),
       });
     }
     if (conversationId && method === "POST" && parts.length === 4) {
@@ -287,24 +431,28 @@ async function dispatch(
         case "messages": {
           const input = await body(request, sendMessageSchema);
           return success(
-            await support.conversations.sendMessage({
-              body: input.body,
-              clientMessageId: input.clientMessageId,
-              conversationId,
-              actor,
-              ...(input.type ? { type: input.type } : {}),
-            }),
+            agentMessage(
+              await support.conversations.sendMessage({
+                body: input.body,
+                clientMessageId: input.clientMessageId,
+                conversationId,
+                actor,
+                ...(input.type ? { type: input.type } : {}),
+              }),
+            ),
             201,
           );
         }
         case "notes": {
           const input = await body(request, noteSchema);
           return success(
-            await support.conversations.addInternalNote({
-              ...input,
-              conversationId,
-              actor,
-            }),
+            agentMessage(
+              await support.conversations.addInternalNote({
+                ...input,
+                conversationId,
+                actor,
+              }),
+            ),
             201,
           );
         }
@@ -318,6 +466,14 @@ async function dispatch(
             }),
           );
         }
+        case "assign-self":
+          return success(
+            await support.conversations.assign({
+              agentId: actor.id,
+              conversationId,
+              actor,
+            }),
+          );
         case "resolve":
           return success(
             await support.conversations.changeStatus({
@@ -330,7 +486,35 @@ async function dispatch(
           return success(
             await support.conversations.reopen({ conversationId, actor }),
           );
+        case "spam":
+          return success(
+            await support.conversations.markSpam({ conversationId, actor }),
+          );
       }
+    }
+    if (
+      conversationId &&
+      method === "POST" &&
+      parts.length === 5 &&
+      parts[3] === "tags"
+    ) {
+      const tagId = parts[4];
+      if (!tagId)
+        throw new HttpError("VALIDATION_ERROR", "A tag is required.", 400);
+      await support.tags.add({ conversationId, tagId, actor });
+      return success({ conversationId, tagId });
+    }
+    if (
+      conversationId &&
+      method === "DELETE" &&
+      parts.length === 5 &&
+      parts[3] === "tags"
+    ) {
+      const tagId = parts[4];
+      if (!tagId)
+        throw new HttpError("VALIDATION_ERROR", "A tag is required.", 400);
+      await support.tags.remove({ conversationId, tagId, actor });
+      return success({ conversationId, tagId });
     }
     if (conversationId && method === "PATCH" && parts.length === 3) {
       const input = await body(request, statusSchema);
@@ -343,13 +527,29 @@ async function dispatch(
       );
     }
   }
+  if (
+    method === "POST" &&
+    parts[0] === "agent" &&
+    parts[1] === "messages" &&
+    parts[3] === "read"
+  ) {
+    const messageId = parts[2];
+    if (messageId) {
+      const actor = await support.auth.resolveAgent(authContext(request));
+      return success(await support.messages.recordRead({ messageId, actor }));
+    }
+  }
   throw new HttpError("NOT_FOUND", "The support route was not found.", 404);
 }
 
 /** Creates handlers around an already composed SDK instance. */
 export function createSupportServer(
   support: SupportKit | Promise<SupportKit> | (() => Promise<SupportKit>),
-  options: { readonly allowedOrigins: readonly string[] },
+  options: {
+    readonly allowedOrigins: readonly string[];
+    readonly widget?: WidgetConfig;
+    readonly features?: FeatureFlags;
+  },
 ): SupportRouteHandlers {
   let resolved: Promise<SupportKit> | undefined;
   const resolveSupport = (): Promise<SupportKit> => {
@@ -362,7 +562,7 @@ export function createSupportServer(
       request.headers.get("x-request-id") ?? globalThis.crypto.randomUUID();
     try {
       enforceOrigin(request, options.allowedOrigins);
-      const response = await dispatch(await resolveSupport(), request);
+      const response = await dispatch(await resolveSupport(), request, options);
       response.headers.set("x-request-id", requestId);
       return response;
     } catch (error) {
@@ -408,5 +608,7 @@ export function createSupportHandler(
 ): SupportRouteHandlers {
   return createSupportServer(() => createSupportKit(config), {
     allowedOrigins: config.security.allowedOrigins,
+    ...(config.widget ? { widget: config.widget } : {}),
+    ...(config.features ? { features: config.features } : {}),
   });
 }

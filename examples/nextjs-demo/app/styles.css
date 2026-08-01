@@ -8,10 +8,8 @@
 }
 
 body {
-  display: grid;
   min-height: 100vh;
   margin: 0;
-  place-items: center;
   background: #0b1020;
   color: #f8fafc;
 }
@@ -22,6 +20,7 @@ main {
   border: 1px solid #334155;
   border-radius: 1rem;
   background: #111827;
+  margin: 3rem auto;
 }
 
 h1 {

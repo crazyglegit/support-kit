@@ -20,7 +20,7 @@ shared `{ success, data }` or `{ success, error }` envelopes. Mutation requests 
 ## Implemented routes
 
 - Customer: session, conversation list/create/detail, message list/create, and read receipt.
-- Agent: inbox/detail, reply, internal note, assignment, resolve, reopen, and status update.
+- Agent: verified session, inbox/detail, reply, internal note, assignment, resolve, reopen, spam, status update, tag mutation, and read receipt.
 
 Customer endpoints try the configured customer identity first and then the verified
 visitor identity. Agent endpoints require an agent identity. Conversation ownership and

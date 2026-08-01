@@ -21,5 +21,6 @@ export default defineConfig({
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
     url: "http://127.0.0.1:3000",
+    env: { SUPPORT_DEMO_AGENT_SECRET: "playwright-agent-secret" },
   },
 });

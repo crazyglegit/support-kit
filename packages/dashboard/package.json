@@ -1,7 +1,7 @@
 {
   "name": "@crazyglegit/support-dashboard",
   "version": "0.0.0",
-  "description": "Agent dashboard package foundation for Support Kit",
+  "description": "Prebuilt browser agent dashboard for Support Kit",
   "type": "module",
   "sideEffects": false,
   "files": [
@@ -17,11 +17,20 @@
     "build": "tsc -p tsconfig.build.json",
     "clean": "rimraf dist tsconfig.tsbuildinfo",
     "lint": "eslint src --max-warnings 0",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
+    "size": "pnpm build && node -e \"const fs=require('node:fs'),z=require('node:zlib'),files=fs.readdirSync('dist').filter(f=>f.endsWith('.js')&&!f.includes('.test.')),b=Buffer.concat(files.map(f=>fs.readFileSync('dist/'+f)));console.log(JSON.stringify({files,bytes:b.length,gzipBytes:z.gzipSync(b).length}))\"",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "engines": {
     "node": ">=22"
+  },
+  "dependencies": {
+    "@crazyglegit/support-contracts": "workspace:*",
+    "socket.io-client": "4.8.3",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "happy-dom": "18.0.1"
   },
   "publishConfig": {
     "access": "restricted"
