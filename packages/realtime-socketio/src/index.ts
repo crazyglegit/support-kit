@@ -133,6 +133,13 @@ function publicMessage(
     senderId: message.senderId,
     body: message.body,
     deliveryStatus: message.deliveryStatus,
+    attachments: (message.attachments ?? []).map((attachment) => ({
+      id: attachment.id,
+      fileName: attachment.safeDisplayFilename,
+      mediaType: attachment.detectedMimeType ?? attachment.claimedMimeType,
+      sizeBytes: attachment.sizeBytes,
+      status: "ready" as const,
+    })),
     createdAt: message.createdAt.toISOString(),
     updatedAt: message.updatedAt.toISOString(),
   };
@@ -346,6 +353,7 @@ class SocketServerImplementation implements SupportSocketServer {
         conversationId: input.conversationId,
         body: input.body,
         clientMessageId: input.clientMessageId,
+        ...(input.attachmentIds ? { attachmentIds: input.attachmentIds } : {}),
       });
       const resource = `message.created:${message.id}`;
       const created = this.wasCommittedAfter(resource, beforeCommit);
@@ -469,7 +477,12 @@ class SocketServerImplementation implements SupportSocketServer {
       async (agent, input) => {
         const beforeCommit = this.#commitSequence;
         const message = await this.#support.conversations.addInternalNote({
-          ...input,
+          conversationId: input.conversationId,
+          body: input.body,
+          clientMessageId: input.clientMessageId,
+          ...(input.attachmentIds
+            ? { attachmentIds: input.attachmentIds }
+            : {}),
           actor: agent,
         });
         const resource = `internal_note.created:${message.id}`;

@@ -4,6 +4,7 @@ import {
   identifierSchema,
   isoTimestampSchema,
 } from "./shared.js";
+import { publicAttachmentSchema } from "./attachments.js";
 
 const customerConversationStatusSchema = z.enum([
   "open",
@@ -52,6 +53,7 @@ export const customerMessageSchema = z.strictObject({
   senderType: z.enum(["customer", "visitor", "agent", "bot", "system"]),
   body: z.string().max(50_000),
   deliveryStatus: customerDeliveryStatusSchema,
+  attachments: z.array(publicAttachmentSchema).max(5).optional(),
   createdAt: isoTimestampSchema,
   updatedAt: isoTimestampSchema,
 });
@@ -72,6 +74,13 @@ export const publicWidgetConfigurationSchema = z.strictObject({
     attachments: z.boolean(),
     chatbot: z.boolean(),
   }),
+  attachments: z
+    .strictObject({
+      maxFileSizeBytes: z.number().int().positive(),
+      maxFilesPerMessage: z.number().int().positive().max(10),
+      allowedMimeTypes: z.array(z.string().min(1).max(127)).max(32),
+    })
+    .optional(),
 });
 
 /** Browser-safe public Socket.IO envelope without a dependency on domain modules. */
@@ -96,6 +105,19 @@ export const widgetApiErrorEnvelopeSchema = z.strictObject({
       "CONFLICT",
       "RATE_LIMITED",
       "INVALID_STATE_TRANSITION",
+      "ATTACHMENTS_DISABLED",
+      "FILE_TOO_LARGE",
+      "FILE_TYPE_NOT_ALLOWED",
+      "TOO_MANY_ATTACHMENTS",
+      "ATTACHMENT_NOT_READY",
+      "ATTACHMENT_REJECTED",
+      "ATTACHMENT_ALREADY_ATTACHED",
+      "UPLOAD_EXPIRED",
+      "UPLOAD_NOT_FOUND",
+      "UPLOAD_VERIFICATION_FAILED",
+      "MALWARE_DETECTED",
+      "SCAN_FAILED",
+      "STORAGE_UNAVAILABLE",
       "INTERNAL_ERROR",
     ]),
     message: z.string().min(1),

@@ -23,6 +23,7 @@ import type {
   Customer,
   Message,
   Tag,
+  AttachmentMetadata,
 } from "@crazyglegit/support-core";
 import type {
   DefaultRole,
@@ -104,6 +105,45 @@ export interface SupportTagOperations {
   remove(input: ConversationTagOperationInput): Promise<void>;
 }
 
+export interface CreateAttachmentUploadIntentOperationInput {
+  readonly conversationId: string;
+  readonly actor: CustomerActor | AgentActor;
+  readonly fileName: string;
+  readonly mimeType: string;
+  readonly sizeBytes: number;
+  readonly purpose?: "reply" | "internal_note";
+}
+export interface AttachmentOperationInput {
+  readonly conversationId: string;
+  readonly attachmentId: string;
+  readonly actor: CustomerActor | AgentActor;
+}
+export interface SanitizedAttachment {
+  readonly id: string;
+  readonly fileName: string;
+  readonly mediaType: string;
+  readonly sizeBytes: number;
+  readonly status: AttachmentMetadata["status"];
+}
+export interface SupportAttachmentOperations {
+  createUploadIntent(
+    input: CreateAttachmentUploadIntentOperationInput,
+  ): Promise<{
+    readonly attachment: SanitizedAttachment;
+    readonly upload: {
+      readonly method: "PUT";
+      readonly url: string;
+      readonly headers: Readonly<Record<string, string>>;
+      readonly expiresAt: string;
+    };
+  }>;
+  completeUpload(input: AttachmentOperationInput): Promise<SanitizedAttachment>;
+  deletePending(input: AttachmentOperationInput): Promise<void>;
+  getDownload(
+    input: AttachmentOperationInput,
+  ): Promise<{ readonly url: string; readonly expiresAt: string }>;
+}
+
 export interface SupportAuthOperations {
   resolveCustomer(
     context: SupportAuthContext,
@@ -161,6 +201,7 @@ export interface SupportKit {
   readonly customers: SupportCustomerOperations;
   readonly agents: SupportAgentOperations;
   readonly tags: SupportTagOperations;
+  readonly attachments: SupportAttachmentOperations;
   readonly auth: SupportAuthOperations;
   readonly events: SupportEventOperations;
   healthCheck(): Promise<SupportKitHealth>;

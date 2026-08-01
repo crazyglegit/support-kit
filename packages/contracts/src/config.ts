@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type {
+  AttachmentScannerAdapter,
   SupportAIAdapter,
   SupportAuthAdapter,
   SupportDatabaseAdapter,
@@ -7,6 +8,7 @@ import type {
   SupportRealtimeAdapter,
   SupportStorageAdapter,
 } from "./adapters.js";
+import { DEFAULT_ATTACHMENT_MIME_TYPES } from "./attachments.js";
 import { identifierSchema, metadataSchema } from "./shared.js";
 
 /** Runtime schema for customer widget configuration. */
@@ -31,6 +33,25 @@ export const featureFlagsSchema = z.strictObject({
   attachments: z.boolean().optional(),
   chatbot: z.boolean().optional(),
   aiWriting: z.boolean().optional(),
+});
+
+export const attachmentConfigSchema = z.strictObject({
+  enabled: z.boolean().default(false),
+  maxFileSizeBytes: z
+    .number()
+    .int()
+    .positive()
+    .max(104_857_600)
+    .default(26_214_400),
+  maxFilesPerMessage: z.number().int().min(1).max(10).default(5),
+  allowedMimeTypes: z
+    .array(z.string().min(1).max(127))
+    .min(1)
+    .max(32)
+    .default([...DEFAULT_ATTACHMENT_MIME_TYPES]),
+  uploadUrlTtlSeconds: z.number().int().min(30).max(900).default(300),
+  downloadUrlTtlSeconds: z.number().int().min(30).max(900).default(120),
+  scanPolicy: z.enum(["required", "optional", "disabled"]).default("required"),
 });
 
 const originSchema = z
@@ -71,6 +92,7 @@ export const supportDeclarativeConfigSchema = z.strictObject({
   }),
   widget: widgetConfigSchema.optional(),
   features: featureFlagsSchema.optional(),
+  attachments: attachmentConfigSchema.optional(),
   security: securityConfigSchema,
   lifecycle: lifecycleConfigSchema.default({ adapterOwnership: "host" }),
 });
@@ -81,6 +103,7 @@ export const supportConfigSchema = supportDeclarativeConfigSchema;
 export type WidgetConfig = z.infer<typeof widgetConfigSchema>;
 export type SupportWidgetConfig = WidgetConfig;
 export type FeatureFlags = z.infer<typeof featureFlagsSchema>;
+export type AttachmentConfig = z.infer<typeof attachmentConfigSchema>;
 export type SecurityConfig = z.infer<typeof securityConfigSchema>;
 export type ProjectInitializationPolicy = z.infer<
   typeof projectInitializationPolicySchema
@@ -101,6 +124,7 @@ export interface SupportConfig extends Omit<
   readonly database: SupportDatabaseAdapter;
   readonly realtime?: SupportRealtimeAdapter;
   readonly storage?: SupportStorageAdapter;
+  readonly attachmentScanner?: AttachmentScannerAdapter;
   readonly notifications?: SupportNotificationAdapter;
   readonly ai?: SupportAIAdapter;
 }
@@ -114,13 +138,23 @@ export function defineSupportConfig<TConfig extends SupportConfig>(
     projectInitialization: config.projectInitialization,
     widget: config.widget,
     features: config.features,
+    attachments: config.attachments,
     security: config.security,
     lifecycle: config.lifecycle,
   });
-  if (declarative.features?.attachments && !config.storage)
+  const attachmentsEnabled =
+    declarative.attachments?.enabled === true ||
+    declarative.features?.attachments === true;
+  if (attachmentsEnabled && !config.storage)
     throw new Error("Attachment features require a storage adapter.");
-  if (declarative.features?.attachments && !declarative.security.maxUploadBytes)
-    throw new Error("Attachment features require security.maxUploadBytes.");
+  if (
+    attachmentsEnabled &&
+    declarative.attachments?.scanPolicy !== "disabled" &&
+    !config.attachmentScanner
+  )
+    throw new Error(
+      "Attachment scan policy requires an attachment scanner adapter.",
+    );
   if (declarative.features?.aiWriting && !config.ai)
     throw new Error("AI writing requires an AI adapter.");
   return { ...config, ...declarative };

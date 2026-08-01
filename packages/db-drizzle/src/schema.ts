@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   bigint,
+  check,
   foreignKey,
   index,
   jsonb,
@@ -49,6 +50,19 @@ export const participantTypeEnum = pgEnum("support_participant_type", [
   "visitor",
   "agent",
 ]);
+export const attachmentStatusEnum = pgEnum("support_attachment_status", [
+  "pending_upload",
+  "uploaded",
+  "scanning",
+  "ready",
+  "rejected",
+  "failed",
+  "deleted",
+]);
+export const attachmentScanStatusEnum = pgEnum(
+  "support_attachment_scan_status",
+  ["pending", "clean", "infected", "suspicious", "failed", "skipped"],
+);
 
 const timestamps = {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
@@ -345,10 +359,28 @@ export const attachments = pgTable(
   {
     id: uuid("id").primaryKey(),
     projectId: projectId(),
+    conversationId: uuid("conversation_id").notNull(),
     messageId: uuid("message_id"),
-    fileName: text("file_name").notNull(),
-    mediaType: text("media_type").notNull(),
+    uploaderType: senderTypeEnum("uploader_type").notNull(),
+    uploaderId: uuid("uploader_id").notNull(),
+    visibility: text("visibility")
+      .$type<"public" | "internal_note">()
+      .notNull(),
+    storageKey: text("storage_key").notNull(),
+    originalFilename: text("original_filename").notNull(),
+    safeDisplayFilename: text("safe_display_filename").notNull(),
+    claimedMimeType: text("claimed_mime_type").notNull(),
+    detectedMimeType: text("detected_mime_type"),
     sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
+    checksumSha256: text("checksum_sha256"),
+    status: attachmentStatusEnum("status").notNull(),
+    scanStatus: attachmentScanStatusEnum("scan_status").notNull(),
+    rejectionReasonCode: text("rejection_reason_code"),
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true }),
+    uploadExpiresAt: timestamp("upload_expires_at", { withTimezone: true }),
+    scannedAt: timestamp("scanned_at", { withTimezone: true }),
+    attachedAt: timestamp("attached_at", { withTimezone: true }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
     metadata: jsonb("metadata")
       .$type<Readonly<Record<string, unknown>>>()
       .notNull()
@@ -357,14 +389,34 @@ export const attachments = pgTable(
   },
   (t) => [
     foreignKey({
+      name: "support_attachments_project_conversation_fk",
+      columns: [t.projectId, t.conversationId],
+      foreignColumns: [conversations.projectId, conversations.id],
+    }),
+    foreignKey({
       name: "support_attachments_project_message_fk",
       columns: [t.projectId, t.messageId],
       foreignColumns: [messages.projectId, messages.id],
     }),
     uniqueIndex("support_attachments_project_id_uidx").on(t.projectId, t.id),
+    uniqueIndex("support_attachments_storage_key_uidx").on(t.storageKey),
+    index("support_attachments_project_conversation_idx").on(
+      t.projectId,
+      t.conversationId,
+    ),
     index("support_attachments_project_message_idx").on(
       t.projectId,
       t.messageId,
+    ),
+    index("support_attachments_project_uploader_idx").on(
+      t.projectId,
+      t.uploaderType,
+      t.uploaderId,
+    ),
+    index("support_attachments_project_status_idx").on(t.projectId, t.status),
+    check(
+      "support_attachments_visibility_check",
+      sql`${t.visibility} in ('public', 'internal_note')`,
     ),
   ],
 );

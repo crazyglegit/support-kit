@@ -156,6 +156,63 @@ describe("configuration contract", () => {
       }),
     ).toThrow();
   });
+
+  it("requires explicit secure attachment adapters and preserves disabled compatibility", () => {
+    const storage = {
+      createUploadTarget: () => Promise.reject(new Error("unused")),
+      statObject: () => Promise.reject(new Error("unused")),
+      createDownloadUrl: () => Promise.reject(new Error("unused")),
+      deleteObject: () => Promise.resolve(),
+    };
+    expect(() =>
+      defineSupportConfig({
+        ...config,
+        attachments: {
+          enabled: true,
+          maxFileSizeBytes: 10_000_000,
+          maxFilesPerMessage: 5,
+          allowedMimeTypes: ["image/png"],
+          uploadUrlTtlSeconds: 300,
+          downloadUrlTtlSeconds: 60,
+          scanPolicy: "required",
+        },
+      }),
+    ).toThrow(/storage/u);
+    expect(() =>
+      defineSupportConfig({
+        ...config,
+        storage,
+        attachments: {
+          enabled: true,
+          maxFileSizeBytes: 10_000_000,
+          maxFilesPerMessage: 5,
+          allowedMimeTypes: ["image/png"],
+          uploadUrlTtlSeconds: 300,
+          downloadUrlTtlSeconds: 60,
+          scanPolicy: "required",
+        },
+      }),
+    ).toThrow(/scanner/u);
+    expect(
+      defineSupportConfig({
+        ...config,
+        storage,
+        attachments: {
+          enabled: true,
+          maxFileSizeBytes: 10_000_000,
+          maxFilesPerMessage: 5,
+          allowedMimeTypes: ["image/png"],
+          uploadUrlTtlSeconds: 300,
+          downloadUrlTtlSeconds: 60,
+          scanPolicy: "disabled",
+        },
+      }).attachments,
+    ).toMatchObject({
+      enabled: true,
+      scanPolicy: "disabled",
+      maxFilesPerMessage: 5,
+    });
+  });
 });
 
 describe("API envelopes", () => {
@@ -235,7 +292,7 @@ describe("enum schemas", () => {
   );
 
   it("declares every required API error code", () => {
-    expect(API_ERROR_CODES).toHaveLength(8);
+    expect(API_ERROR_CODES).toHaveLength(21);
     for (const code of API_ERROR_CODES) {
       expect(
         apiErrorEnvelopeSchema.safeParse({

@@ -65,6 +65,10 @@ Socket.IO notifications are not history: after reconnect, fetch the conversation
 and missed messages through the HTTP API, reconcile by durable IDs, then resume
 live events. Retrying `message.send` with the same `clientMessageId` is safe.
 
+Message-created payloads may include sanitized ready attachment cards. They never
+contain bytes, storage keys, bucket data, scanner diagnostics, or signed URLs.
+Uploads and downloads always use the authorized HTTP/S3 flow.
+
 The Phase 7 adapter is correct for one Node process. Socket.IO's adapter boundary
 allows a future Redis adapter or broker, but guaranteed database-to-broker delivery
 requires a transactional outbox and is not part of this phase.

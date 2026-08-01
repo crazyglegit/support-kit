@@ -76,6 +76,7 @@ export interface SendMessageInput {
   readonly body: string;
   readonly clientMessageId: string;
   readonly type?: Exclude<MessageType, "internal_note">;
+  readonly attachmentIds?: readonly string[];
 }
 
 /** Input for creating an agent-only note. */
@@ -85,6 +86,7 @@ export interface AddInternalNoteInput {
   readonly actor: AgentActor;
   readonly body: string;
   readonly clientMessageId: string;
+  readonly attachmentIds?: readonly string[];
 }
 
 /** Input for assigning a conversation to an agent. */

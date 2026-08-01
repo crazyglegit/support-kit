@@ -536,4 +536,63 @@ describe("security, fallback, and lifecycle", () => {
     expect(document.querySelector("[data-support-widget]")).toBeNull();
     removeDocumentListener.mockRestore();
   });
+
+  it("renders sanitized attachment cards and requests authorized downloads only on activation", async () => {
+    conversations = [conversation];
+    messages = [
+      {
+        ...baseMessage,
+        body: "",
+        attachments: [
+          {
+            id: "attachment-1",
+            fileName: '<img src=x onerror="alert(1)">.txt',
+            mediaType: "text/plain",
+            sizeBytes: 4,
+            status: "ready",
+          },
+        ],
+      },
+    ];
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
+    customFetch = (path) => {
+      if (path.endsWith("/widget/config")) return success(serverConfig);
+      if (path.endsWith("/session"))
+        return success({ actor: { type: actorType, id: "server-only-id" } });
+      if (path.endsWith("/conversations")) return success(conversations);
+      if (path.endsWith(`/conversations/${conversation.id}`))
+        return success({ conversation });
+      if (path.endsWith(`/conversations/${conversation.id}/messages`))
+        return success(messages);
+      if (path.includes("/attachments/attachment-1/download?"))
+        return success({
+          url: "https://storage.test/download",
+          expiresAt: "2026-08-02T00:02:00.000Z",
+        });
+      return success({});
+    };
+    const widget = createSupportWidget();
+    widget.open();
+    await settle();
+    await openConversation();
+    expect(root().querySelector("img")).toBeNull();
+    expect(root().textContent).toContain("<img src=x");
+    expect(requests.some(({ path }) => path.includes("/attachments/"))).toBe(
+      false,
+    );
+    root()
+      .querySelector<HTMLButtonElement>('[data-action="download"]')
+      ?.click();
+    await settle();
+    expect(
+      requests.some(({ path }) =>
+        path.includes("/attachments/attachment-1/download?"),
+      ),
+    ).toBe(true);
+    expect(click).toHaveBeenCalledOnce();
+    widget.destroy();
+    click.mockRestore();
+  });
 });

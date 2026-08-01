@@ -15,6 +15,13 @@
       "when": 1785527688454,
       "tag": "0001_spicy_microchip",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785715200000,
+      "tag": "0002_secure_attachments",
+      "breakpoints": true
     }
   ]
 }

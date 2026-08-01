@@ -15,3 +15,5 @@ widget.on("message.received", () => updateHostUnreadIndicator());
 ```
 
 See [customer-widget.md](../../docs/integration/customer-widget.md) for configuration, authentication, theming, and troubleshooting.
+
+When server attachment configuration is enabled, active conversations include a keyboard-accessible file picker, progress, cancellation, retry, removal, attachment-only sends, safe file cards, and authorized temporary downloads. No storage key or permanent URL enters widget state.

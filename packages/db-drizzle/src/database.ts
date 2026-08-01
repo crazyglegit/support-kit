@@ -169,10 +169,34 @@ function mapAttachment(
   return {
     id: row.id,
     projectId: row.projectId,
+    conversationId: row.conversationId,
     ...(row.messageId === null ? {} : { messageId: row.messageId }),
-    fileName: row.fileName,
-    mediaType: row.mediaType,
+    uploaderType: row.uploaderType,
+    uploaderId: row.uploaderId,
+    visibility: row.visibility,
+    storageKey: row.storageKey,
+    originalFilename: row.originalFilename,
+    safeDisplayFilename: row.safeDisplayFilename,
+    claimedMimeType: row.claimedMimeType,
+    ...(row.detectedMimeType === null
+      ? {}
+      : { detectedMimeType: row.detectedMimeType }),
     sizeBytes: row.sizeBytes,
+    ...(row.checksumSha256 === null
+      ? {}
+      : { checksumSha256: row.checksumSha256 }),
+    status: row.status,
+    scanStatus: row.scanStatus,
+    ...(row.rejectionReasonCode === null
+      ? {}
+      : { rejectionReasonCode: row.rejectionReasonCode }),
+    ...(row.uploadedAt === null ? {} : { uploadedAt: row.uploadedAt }),
+    ...(row.uploadExpiresAt === null
+      ? {}
+      : { uploadExpiresAt: row.uploadExpiresAt }),
+    ...(row.scannedAt === null ? {} : { scannedAt: row.scannedAt }),
+    ...(row.attachedAt === null ? {} : { attachedAt: row.attachedAt }),
+    ...(row.deletedAt === null ? {} : { deletedAt: row.deletedAt }),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -795,6 +819,16 @@ function createAdapter(db: Database): SupportDatabaseAdapter {
               target: schema.attachments.id,
               set: {
                 messageId: entity.messageId ?? null,
+                detectedMimeType: entity.detectedMimeType ?? null,
+                checksumSha256: entity.checksumSha256 ?? null,
+                status: entity.status,
+                scanStatus: entity.scanStatus,
+                rejectionReasonCode: entity.rejectionReasonCode ?? null,
+                uploadedAt: entity.uploadedAt ?? null,
+                uploadExpiresAt: entity.uploadExpiresAt ?? null,
+                scannedAt: entity.scannedAt ?? null,
+                attachedAt: entity.attachedAt ?? null,
+                deletedAt: entity.deletedAt ?? null,
                 updatedAt: entity.updatedAt,
               },
               setWhere: eq(schema.attachments.projectId, entity.projectId),
@@ -803,6 +837,42 @@ function createAdapter(db: Database): SupportDatabaseAdapter {
           if (!row)
             throw new DomainError("NOT_FOUND", "Attachment was not found.");
           return mapAttachment(row);
+        }),
+      findByMessage: (projectId, messageId) =>
+        safe(async () =>
+          db
+            .select()
+            .from(schema.attachments)
+            .where(
+              and(
+                eq(schema.attachments.projectId, projectId),
+                eq(schema.attachments.messageId, messageId),
+              ),
+            )
+            .then((rows) => rows.map(mapAttachment)),
+        ),
+      claimForMessage: (input) =>
+        safe(async () => {
+          const [row] = await db
+            .update(schema.attachments)
+            .set({
+              messageId: input.messageId,
+              attachedAt: input.attachedAt,
+              updatedAt: input.attachedAt,
+            })
+            .where(
+              and(
+                eq(schema.attachments.projectId, input.projectId),
+                eq(schema.attachments.id, input.attachmentId),
+                eq(schema.attachments.conversationId, input.conversationId),
+                eq(schema.attachments.uploaderId, input.uploaderId),
+                eq(schema.attachments.visibility, input.visibility),
+                eq(schema.attachments.status, "ready"),
+                isNull(schema.attachments.messageId),
+              ),
+            )
+            .returning();
+          return row ? mapAttachment(row) : null;
         }),
     },
     tags: {

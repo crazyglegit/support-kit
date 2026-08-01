@@ -118,7 +118,21 @@ export interface MessageReceiptRepository {
 }
 
 /** Project-scoped attachment repository port. */
-export type AttachmentRepository = SupportRepository<AttachmentMetadata>;
+export interface AttachmentRepository extends SupportRepository<AttachmentMetadata> {
+  findByMessage?(
+    projectId: string,
+    messageId: string,
+  ): Promise<readonly AttachmentMetadata[]>;
+  claimForMessage?(input: {
+    readonly projectId: string;
+    readonly attachmentId: string;
+    readonly conversationId: string;
+    readonly uploaderId: string;
+    readonly visibility: "public" | "internal_note";
+    readonly messageId: string;
+    readonly attachedAt: Date;
+  }): Promise<AttachmentMetadata | null>;
+}
 /** Project-scoped tag repository port. */
 export type TagRepository = SupportRepository<Tag>;
 

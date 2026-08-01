@@ -42,25 +42,64 @@ export interface SupportRealtimeAdapter extends SupportAdapterLifecycle {
 }
 
 /** Input for a provider-neutral upload request. */
-export interface CreateUploadInput {
+export interface CreateUploadTargetInput {
   readonly projectId: string;
-  readonly fileName: string;
-  readonly mediaType: string;
+  readonly conversationId: string;
+  readonly attachmentId: string;
+  readonly storageKey: string;
+  readonly contentType: string;
   readonly sizeBytes: number;
+  readonly expiresInSeconds: number;
 }
 
 /** A provider-neutral upload destination. */
 export interface UploadTarget {
-  readonly uploadId: string;
+  readonly method: "PUT";
   readonly url: string;
-  readonly headers?: Readonly<Record<string, string>>;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly expiresAt: string;
+}
+
+export interface StoredObjectMetadata {
+  readonly sizeBytes: number;
+  readonly contentType?: string;
+  readonly checksumSha256?: string;
+}
+
+export interface CreateDownloadUrlInput {
+  readonly storageKey: string;
+  readonly fileName: string;
+  readonly contentType: string;
+  readonly expiresInSeconds: number;
 }
 
 /** Provider-neutral private object storage boundary. */
 export interface SupportStorageAdapter extends SupportAdapterLifecycle {
-  createUpload(input: CreateUploadInput): Promise<UploadTarget>;
-  createDownloadUrl(fileId: string): Promise<string>;
-  deleteFile(fileId: string): Promise<void>;
+  createUploadTarget(input: CreateUploadTargetInput): Promise<UploadTarget>;
+  statObject(storageKey: string): Promise<StoredObjectMetadata>;
+  createDownloadUrl(
+    input: CreateDownloadUrlInput,
+  ): Promise<{ readonly url: string; readonly expiresAt: string }>;
+  deleteObject(storageKey: string): Promise<void>;
+}
+
+export interface AttachmentScanInput {
+  readonly projectId: string;
+  readonly attachmentId: string;
+  readonly storage: SupportStorageAdapter;
+  readonly storageKey: string;
+  readonly claimedMimeType: string;
+  readonly expectedSizeBytes: number;
+}
+export interface AttachmentScanResult {
+  readonly verdict: "clean" | "infected" | "suspicious" | "failed";
+  readonly detectedMimeType?: string;
+  readonly sizeBytes: number;
+  readonly checksumSha256?: string;
+  readonly reasonCode?: string;
+}
+export interface AttachmentScannerAdapter extends SupportAdapterLifecycle {
+  scan(input: AttachmentScanInput): Promise<AttachmentScanResult>;
 }
 
 /** Provider-neutral notification payload. */

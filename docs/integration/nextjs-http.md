@@ -26,6 +26,11 @@ Customer endpoints try the configured customer identity first and then the verif
 visitor identity. Agent endpoints require an agent identity. Conversation ownership and
 agent permissions are enforced again in the framework-independent application layer.
 
-Future upload, AI, saved-reply, customer-detail, and admin endpoints return a structured
+Attachment upload-intent, completion, pending deletion, and authorized download routes
+are implemented separately for customer/visitor and agent authentication boundaries.
+Message and note routes accept ready `attachmentIds`; binary bytes never pass through
+Next.js or Socket.IO.
+
+Future AI, saved-reply, customer-detail, and admin endpoints return a structured
 404 until their corresponding public SDK operations exist; the HTTP adapter does not
 reach through the SDK into repositories.

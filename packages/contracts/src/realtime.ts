@@ -5,6 +5,7 @@ import {
   identifierSchema,
   isoTimestampSchema,
 } from "./shared.js";
+import { attachmentIdsSchema } from "./attachments.js";
 
 export const SUPPORT_SOCKET_CLIENT_EVENTS = [
   "conversation.join",
@@ -50,10 +51,15 @@ const conversationInput = z.strictObject({
 
 export const conversationJoinSchema = conversationInput;
 export const conversationLeaveSchema = conversationInput;
-export const messageSendSchema = conversationInput.extend({
-  body: z.string().trim().min(1).max(50_000),
-  clientMessageId: clientMessageIdSchema,
-});
+export const messageSendSchema = conversationInput
+  .extend({
+    body: z.string().trim().max(50_000).default(""),
+    clientMessageId: clientMessageIdSchema,
+    attachmentIds: attachmentIdsSchema.optional(),
+  })
+  .refine(
+    (value) => value.body.length > 0 || (value.attachmentIds?.length ?? 0) > 0,
+  );
 export const messageReadSchema = z.strictObject({
   messageId: identifierSchema,
   requestId: identifierSchema.optional(),

@@ -31,3 +31,9 @@ Unique constraints cover project keys, host identities per project, participants
 `SupportDatabaseAdapter.transaction()` creates a Drizzle transaction and supplies repositories bound to that transaction. Application workflows write conversations, participants, messages, assignments, status changes, notes, receipts, tags, and audit records atomically. Application events are intentionally published after the transaction returns. A future transactional outbox can be added beside `support_audit_logs` without changing current application event results.
 
 The adapter never runs migrations when imported.
+
+`support_attachments` stores the complete pending/uploaded/scanning/ready or
+terminal lifecycle, conversation and uploader scope, public-versus-internal-note
+visibility, opaque unique storage key, claimed/detected MIME, size/checksum, and
+transition timestamps. Migration `0002_secure_attachments.sql` adds this lifecycle
+and its project-scoped indexes explicitly.

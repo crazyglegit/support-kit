@@ -1,4 +1,17 @@
 export type { ApplicationEvent, ApplicationEventType } from "./events.js";
+export {
+  CompleteAttachmentUpload,
+  CreateAttachmentUploadIntent,
+  DeletePendingAttachment,
+  GetAttachmentDownload,
+  normalizeAttachmentFilename,
+} from "./attachments.js";
+export type {
+  AttachmentDependencies,
+  AttachmentPolicy,
+  AttachmentScannerPort,
+  AttachmentStoragePort,
+} from "./attachments.js";
 export type { ConversationStatusChangedData } from "./events.js";
 export {
   AddConversationTag,

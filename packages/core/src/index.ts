@@ -18,6 +18,8 @@ export type {
   Agent,
   AnonymousVisitor,
   AttachmentMetadata,
+  AttachmentScanStatus,
+  AttachmentStatus,
   AuditEvent,
   Conversation,
   ConversationAssignment,

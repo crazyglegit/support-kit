@@ -99,6 +99,7 @@ describe("dashboard controller", () => {
     });
     await controller.initialize();
     expect(calls).toEqual([
+      "/api/support/widget/config",
       "/api/support/agent/session",
       "/api/support/agent/conversations",
     ]);
@@ -571,6 +572,65 @@ describe("dashboard controller", () => {
       target.querySelectorAll('[aria-label="customer message"]'),
     ).toHaveLength(1);
     expect(target.textContent).not.toContain("Never visible");
+    controller.destroy();
+  });
+
+  it("keeps reply and internal-note attachment drafts isolated", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string | URL | Request) => {
+        const url = String(input);
+        if (url.endsWith("/widget/config"))
+          return response({
+            features: { attachments: true, chatbot: false },
+            attachments: {
+              maxFileSizeBytes: 1,
+              maxFilesPerMessage: 5,
+              allowedMimeTypes: ["text/plain"],
+            },
+          });
+        if (url.endsWith("/agent/session"))
+          return response({
+            actor: {
+              type: "agent",
+              id: "agent-1",
+              role: "support_agent",
+              permissions: [
+                "conversation.read",
+                "conversation.reply",
+                "internal_note.read",
+                "internal_note.create",
+              ],
+            },
+          });
+        if (url.endsWith("/agent/conversations"))
+          return response([conversation]);
+        return response({ conversation, messages: [] });
+      }),
+    );
+    const target = document.createElement("div");
+    const controller = new SupportDashboardController({ target });
+    await controller.initialize();
+    await controller.openConversation(conversation.id);
+    const choose = (name: string) => {
+      const input = target.querySelector<HTMLInputElement>(".sk-file-input");
+      if (!input) throw new Error("File input was not rendered.");
+      Object.defineProperty(input, "files", {
+        configurable: true,
+        value: [new File(["too large"], name, { type: "text/plain" })],
+      });
+      input.dispatchEvent(new Event("change"));
+    };
+    choose("public.txt");
+    expect(target.textContent).toContain("public.txt");
+    target.querySelector<HTMLElement>('[data-action="note"]')?.click();
+    expect(target.textContent).not.toContain("public.txt");
+    choose("private.txt");
+    expect(target.textContent).toContain("private.txt");
+    expect(target.textContent).not.toContain("public.txt");
+    target.querySelector<HTMLElement>('[data-action="reply"]')?.click();
+    expect(target.textContent).toContain("public.txt");
+    expect(target.textContent).not.toContain("private.txt");
     controller.destroy();
   });
 });

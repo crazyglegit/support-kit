@@ -49,6 +49,128 @@ test("supports keyboard focus, mobile layout, and system dark mode", async ({
   await expect(launcher).toBeFocused();
 });
 
+test("uploads an attachment directly to storage and associates it through the public API", async ({
+  page,
+}) => {
+  const timestamp = "2026-08-02T00:00:00.000Z";
+  const conversation = {
+    id: "conversation-attachment",
+    status: "open",
+    subject: "Attachment test",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+  let uploaded = false;
+  let associatedAttachmentIds: unknown;
+  await page.route("https://storage.test/upload", async (route) => {
+    uploaded = true;
+    await route.fulfill({ status: 200, body: "" });
+  });
+  await page.route("**/api/support/**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const path = url.pathname;
+    let data: unknown;
+    if (path.endsWith("/widget/config"))
+      data = {
+        features: { attachments: true, chatbot: false },
+        attachments: {
+          maxFileSizeBytes: 1_000_000,
+          maxFilesPerMessage: 3,
+          allowedMimeTypes: ["text/plain"],
+        },
+      };
+    else if (path.endsWith("/session"))
+      data = { actor: { type: "visitor", id: "verified-visitor" } };
+    else if (path.endsWith("/attachments/upload-intents"))
+      data = {
+        attachment: {
+          id: "attachment-1",
+          fileName: "evidence.txt",
+          mediaType: "text/plain",
+          sizeBytes: 8,
+          status: "pending_upload",
+        },
+        upload: {
+          method: "PUT",
+          url: "https://storage.test/upload",
+          headers: { "content-type": "text/plain" },
+          expiresAt: "2026-08-02T00:05:00.000Z",
+        },
+      };
+    else if (path.includes("/attachments/attachment-1/complete"))
+      data = {
+        id: "attachment-1",
+        fileName: "evidence.txt",
+        mediaType: "text/plain",
+        sizeBytes: 8,
+        status: "ready",
+      };
+    else if (
+      request.method() === "POST" &&
+      path.endsWith("/conversations/conversation-attachment/messages")
+    ) {
+      const body = request.postDataJSON() as {
+        attachmentIds?: unknown;
+        clientMessageId: string;
+      };
+      associatedAttachmentIds = body.attachmentIds;
+      data = {
+        id: "message-attachment",
+        conversationId: conversation.id,
+        clientMessageId: body.clientMessageId,
+        type: "text",
+        senderType: "visitor",
+        body: "See evidence",
+        deliveryStatus: "sent",
+        attachments: [
+          {
+            id: "attachment-1",
+            fileName: "evidence.txt",
+            mediaType: "text/plain",
+            sizeBytes: 8,
+            status: "ready",
+          },
+        ],
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+    } else if (path.endsWith("/conversations/conversation-attachment/messages"))
+      data = [];
+    else if (path.endsWith("/conversations/conversation-attachment"))
+      data = { conversation };
+    else if (path.endsWith("/conversations")) data = [conversation];
+    else data = {};
+    await route.fulfill({
+      status: path.endsWith("/attachments/upload-intents") ? 201 : 200,
+      contentType: "application/json",
+      body: JSON.stringify({ success: true, data }),
+    });
+  });
+  await page.goto("/");
+  const host = page.locator("[data-support-widget]");
+  await host.locator("button.launcher").click();
+  await host.locator('[data-action="list"]').click();
+  await host.locator('[data-action="conversation"]').click();
+  const chooserPromise = page.waitForEvent("filechooser");
+  await host.getByRole("button", { name: "Attach files" }).click();
+  const chooser = await chooserPromise;
+  await chooser.setFiles({
+    name: "evidence.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("evidence"),
+  });
+  await expect.poll(() => uploaded).toBe(true);
+  await expect(host.getByText("Ready")).toBeVisible();
+  await host
+    .getByRole("textbox", { name: "Write a message" })
+    .fill("See evidence");
+  await host.getByRole("button", { name: "Send" }).click();
+  await expect(host.getByText("evidence.txt")).toBeVisible();
+  expect(uploaded).toBe(true);
+  expect(associatedAttachmentIds).toEqual(["attachment-1"]);
+});
+
 test("mounts the protected agent dashboard with accessible note isolation and responsive navigation", async ({
   page,
   context,

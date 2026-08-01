@@ -84,6 +84,7 @@ export interface Message extends ProjectScopedEntity {
   readonly senderId?: string;
   readonly body: string;
   readonly deliveryStatus: MessageDeliveryStatus;
+  readonly attachments?: readonly AttachmentMetadata[];
 }
 
 /** A durable record that one actor has read one message. */
@@ -97,11 +98,40 @@ export interface MessageReceipt extends ProjectScopedEntity {
 
 /** Safe metadata describing an attachment without provider details. */
 export interface AttachmentMetadata extends ProjectScopedEntity {
+  readonly conversationId: string;
   readonly messageId?: string;
-  readonly fileName: string;
-  readonly mediaType: string;
+  readonly uploaderType: SenderType;
+  readonly uploaderId: string;
+  readonly visibility: "public" | "internal_note";
+  /** Opaque provider key. This field is never serialized to browsers. */
+  readonly storageKey: string;
+  readonly originalFilename: string;
+  readonly safeDisplayFilename: string;
+  readonly claimedMimeType: string;
+  readonly detectedMimeType?: string;
   readonly sizeBytes: number;
+  readonly checksumSha256?: string;
+  readonly status: AttachmentStatus;
+  readonly scanStatus: AttachmentScanStatus;
+  readonly rejectionReasonCode?: string;
+  readonly uploadedAt?: Date;
+  readonly uploadExpiresAt?: Date;
+  readonly scannedAt?: Date;
+  readonly attachedAt?: Date;
+  readonly deletedAt?: Date;
 }
+
+export type AttachmentStatus =
+  | "pending_upload"
+  | "uploaded"
+  | "scanning"
+  | "ready"
+  | "rejected"
+  | "failed"
+  | "deleted";
+
+export type AttachmentScanStatus =
+  "pending" | "clean" | "infected" | "suspicious" | "failed" | "skipped";
 
 /** A label that may be associated with conversations. */
 export interface Tag extends ProjectScopedEntity {

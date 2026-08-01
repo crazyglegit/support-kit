@@ -303,6 +303,15 @@ async function createHarness(input?: {
           tagId: request.tagId,
         }),
     },
+    attachments: {
+      createUploadIntent: () =>
+        Promise.resolve(supportError("FEATURE_UNAVAILABLE", "Not used.")),
+      completeUpload: () =>
+        Promise.resolve(supportError("FEATURE_UNAVAILABLE", "Not used.")),
+      deletePending: () => Promise.resolve(),
+      getDownload: () =>
+        Promise.resolve(supportError("FEATURE_UNAVAILABLE", "Not used.")),
+    },
     customers: {
       upsert: () =>
         Promise.resolve(supportError("FEATURE_UNAVAILABLE", "Not used.")),

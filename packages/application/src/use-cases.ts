@@ -76,7 +76,18 @@ function createMessage(
     type: Message["type"];
   },
 ): Message {
-  requireValue(input.body, "body");
+  if (
+    !input.body.trim() &&
+    !(
+      "attachmentIds" in input &&
+      Array.isArray(input.attachmentIds) &&
+      input.attachmentIds.length > 0
+    )
+  )
+    throw new DomainError(
+      "VALIDATION_ERROR",
+      "A message or attachment is required.",
+    );
   assertValidClientMessageId(input.clientMessageId);
   const now = dependencies.clock.now();
   return {
@@ -92,6 +103,48 @@ function createMessage(
     createdAt: now,
     updatedAt: now,
   };
+}
+
+async function attachToMessage(
+  database: SupportDatabaseAdapter,
+  input: SendMessageInput | AddInternalNoteInput,
+  message: Message,
+): Promise<readonly import("@crazyglegit/support-core").AttachmentMetadata[]> {
+  const ids = [...new Set(input.attachmentIds ?? [])];
+  if (ids.length !== (input.attachmentIds?.length ?? 0))
+    throw new DomainError(
+      "CONFLICT",
+      "Duplicate attachment IDs are not allowed.",
+    );
+  if (ids.length > 5)
+    throw new DomainError(
+      "TOO_MANY_ATTACHMENTS",
+      "Too many attachments were selected.",
+    );
+  const attached = [];
+  if (ids.length > 0 && !database.attachments.claimForMessage)
+    throw new DomainError(
+      "ATTACHMENTS_DISABLED",
+      "Attachments are not available.",
+    );
+  for (const attachmentId of ids) {
+    const claimed = await database.attachments.claimForMessage?.({
+      projectId: input.projectId,
+      attachmentId,
+      conversationId: input.conversationId,
+      uploaderId: input.actor.id,
+      visibility: message.type === "internal_note" ? "internal_note" : "public",
+      messageId: message.id,
+      attachedAt: message.createdAt,
+    });
+    if (!claimed)
+      throw new DomainError(
+        "ATTACHMENT_NOT_READY",
+        "An attachment is unavailable or already attached.",
+      );
+    attached.push(claimed);
+  }
+  return attached;
 }
 
 async function existingMessage(
@@ -211,7 +264,23 @@ export class SendMessage {
             "Client message ID is already used by another message.",
           );
         }
-        return { result: duplicate, events: [] };
+        if (!input.attachmentIds?.length)
+          return { result: duplicate, events: [] };
+        const attachments =
+          (await database.attachments.findByMessage?.(
+            input.projectId,
+            duplicate.id,
+          )) ?? [];
+        const expected = new Set(input.attachmentIds ?? []);
+        if (
+          expected.size !== attachments.length ||
+          attachments.some((item) => !expected.has(item.id))
+        )
+          throw new DomainError(
+            "CONFLICT",
+            "The retry does not match the original attachments.",
+          );
+        return { result: { ...duplicate, attachments }, events: [] };
       }
       const requestedType: string = input.type ?? "text";
       if (
@@ -231,6 +300,7 @@ export class SendMessage {
       >;
       const message = createMessage(this.dependencies, { ...input, type });
       await database.messages.save(message);
+      const attachments = await attachToMessage(database, input, message);
       await database.audit.append(
         auditEvent(this.dependencies, {
           projectId: input.projectId,
@@ -242,7 +312,7 @@ export class SendMessage {
         }),
       );
       return {
-        result: message,
+        result: attachments.length ? { ...message, attachments } : message,
         events: [
           applicationEvent(
             this.dependencies,
@@ -283,13 +353,30 @@ export class AddInternalNote {
             "Client message ID is already used by another message.",
           );
         }
-        return { result: duplicate, events: [] };
+        if (!input.attachmentIds?.length)
+          return { result: duplicate, events: [] };
+        const attachments =
+          (await database.attachments.findByMessage?.(
+            input.projectId,
+            duplicate.id,
+          )) ?? [];
+        const expected = new Set(input.attachmentIds ?? []);
+        if (
+          expected.size !== attachments.length ||
+          attachments.some((item) => !expected.has(item.id))
+        )
+          throw new DomainError(
+            "CONFLICT",
+            "The retry does not match the original attachments.",
+          );
+        return { result: { ...duplicate, attachments }, events: [] };
       }
       const message = createMessage(this.dependencies, {
         ...input,
         type: "internal_note",
       });
       await database.messages.save(message);
+      const attachments = await attachToMessage(database, input, message);
       await database.audit.append(
         auditEvent(this.dependencies, {
           projectId: input.projectId,
@@ -300,7 +387,7 @@ export class AddInternalNote {
         }),
       );
       return {
-        result: message,
+        result: attachments.length ? { ...message, attachments } : message,
         events: [
           applicationEvent(
             this.dependencies,
@@ -709,11 +796,22 @@ export class ListConversationMessages {
           input.projectId,
           input.conversationId,
         );
-      if (input.actor.type !== "agent")
-        return messages.filter(isCustomerVisibleMessage);
-      return input.actor.permissions.includes("internal_note.read")
-        ? messages
-        : messages.filter(isCustomerVisibleMessage);
+      const visible =
+        input.actor.type !== "agent"
+          ? messages.filter(isCustomerVisibleMessage)
+          : input.actor.permissions.includes("internal_note.read")
+            ? messages
+            : messages.filter(isCustomerVisibleMessage);
+      return Promise.all(
+        visible.map(async (message) => ({
+          ...message,
+          attachments:
+            (await this.dependencies.database.attachments.findByMessage?.(
+              input.projectId,
+              message.id,
+            )) ?? [],
+        })),
+      );
     });
   }
 }

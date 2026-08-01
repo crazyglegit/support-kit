@@ -24,6 +24,12 @@ function kit(overrides?: Partial<SupportKit>): SupportKit {
     customers: { upsert: unused },
     agents: { upsert: unused },
     tags: { add: unused, remove: unused },
+    attachments: {
+      createUploadIntent: unused,
+      completeUpload: unused,
+      deletePending: unused,
+      getDownload: unused,
+    },
     auth: {
       resolveCustomer: () =>
         Promise.resolve({ type: "customer", id: "customer-1" }),
@@ -597,4 +603,95 @@ describe("createSupportServer", () => {
       });
     },
   );
+
+  it("maps customer and agent attachment routes without accepting project or uploader identity", async () => {
+    let receivedUploadIntent: unknown;
+    const createUploadIntent = vi.fn((input: unknown) => {
+      receivedUploadIntent = input;
+      return Promise.resolve({
+        attachment: {
+          id: "attachment-1",
+          fileName: "safe.txt",
+          mediaType: "text/plain",
+          sizeBytes: 4,
+          status: "pending_upload" as const,
+        },
+        upload: {
+          method: "PUT" as const,
+          url: "https://storage.test/upload",
+          headers: { "content-type": "text/plain" },
+          expiresAt: "2026-08-02T00:05:00.000Z",
+        },
+      });
+    });
+    const getDownload = vi.fn(() =>
+      Promise.resolve({
+        url: "https://storage.test/download",
+        expiresAt: "2026-08-02T00:02:00.000Z",
+      }),
+    );
+    const support = kit({
+      attachments: {
+        ...kit().attachments,
+        createUploadIntent,
+        getDownload,
+      },
+    });
+    const handlers = createSupportServer(support, {
+      allowedOrigins: ["https://app.test"],
+    });
+    const intent = await handlers.POST(
+      new Request("https://app.test/api/support/attachments/upload-intents", {
+        method: "POST",
+        headers: {
+          origin: "https://app.test",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          conversationId: "conversation-1",
+          fileName: "safe.txt",
+          mimeType: "text/plain",
+          sizeBytes: 4,
+          projectId: "attacker-project",
+        }),
+      }),
+    );
+    expect(intent.status).toBe(400);
+    const valid = await handlers.POST(
+      new Request(
+        "https://app.test/api/support/agent/attachments/upload-intents",
+        {
+          method: "POST",
+          headers: {
+            origin: "https://app.test",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            conversationId: "conversation-1",
+            fileName: "safe.txt",
+            mimeType: "text/plain",
+            sizeBytes: 4,
+            purpose: "internal_note",
+          }),
+        },
+      ),
+    );
+    expect(valid.status).toBe(201);
+    expect(receivedUploadIntent).toMatchObject({
+      actor: { type: "agent" },
+      purpose: "internal_note",
+    });
+    expect(receivedUploadIntent).not.toHaveProperty("projectId");
+    const download = await handlers.GET(
+      new Request(
+        "https://app.test/api/support/attachments/attachment-1/download?conversationId=conversation-1",
+      ),
+    );
+    expect(download.status).toBe(200);
+    expect(getDownload).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actor: { type: "customer", id: "customer-1" },
+      }),
+    );
+  });
 });

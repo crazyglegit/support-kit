@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { API_ERROR_CODES } from "./api.js";
+import { publicAttachmentSchema } from "./attachments.js";
 import {
   clientMessageIdSchema,
   identifierSchema,
@@ -81,6 +82,7 @@ export const dashboardMessageSchema = z.strictObject({
   senderType: dashboardSenderTypeSchema,
   body: z.string().max(50_000),
   deliveryStatus: z.enum(["pending", "sent", "delivered", "read", "failed"]),
+  attachments: z.array(publicAttachmentSchema).max(5).optional(),
   createdAt: isoTimestampSchema,
   updatedAt: isoTimestampSchema,
 });

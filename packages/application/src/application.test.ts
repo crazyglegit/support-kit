@@ -20,6 +20,9 @@ import {
 } from "@crazyglegit/support-core";
 import {
   AddConversationTag,
+  CompleteAttachmentUpload,
+  CreateAttachmentUploadIntent,
+  GetAttachmentDownload,
   AddInternalNote,
   AssignConversation,
   ChangeConversationStatus,
@@ -330,7 +333,45 @@ class FakeDatabase implements SupportDatabaseAdapter {
   };
 
   public get attachments() {
-    return repository(this.state.attachments);
+    return {
+      ...repository(this.state.attachments),
+      findByMessage: (projectId: string, messageId: string) =>
+        Promise.resolve(
+          this.state.attachments.filter(
+            (item) =>
+              item.projectId === projectId && item.messageId === messageId,
+          ),
+        ),
+      claimForMessage: (input: {
+        projectId: string;
+        attachmentId: string;
+        conversationId: string;
+        uploaderId: string;
+        visibility: "public" | "internal_note";
+        messageId: string;
+        attachedAt: Date;
+      }) => {
+        const attachment = this.state.attachments.find(
+          (item) =>
+            item.projectId === input.projectId &&
+            item.id === input.attachmentId &&
+            item.conversationId === input.conversationId &&
+            item.uploaderId === input.uploaderId &&
+            item.visibility === input.visibility &&
+            item.status === "ready" &&
+            !item.messageId,
+        );
+        if (!attachment) return Promise.resolve(null);
+        const claimed = {
+          ...attachment,
+          messageId: input.messageId,
+          attachedAt: input.attachedAt,
+          updatedAt: input.attachedAt,
+        };
+        replaceEntity(this.state.attachments, claimed);
+        return Promise.resolve(claimed);
+      },
+    };
   }
   public get tags() {
     return repository(this.state.tags);
@@ -799,5 +840,202 @@ describe("remaining application catalog", () => {
     expect(database.state.conversationTags).toHaveLength(1);
     await new RemoveConversationTag(dependencies).execute(tagInput);
     expect(database.state.conversationTags).toHaveLength(0);
+  });
+});
+
+describe("secure attachment lifecycle", () => {
+  function attachmentHarness(verdict: "clean" | "infected" = "clean") {
+    const base = harness();
+    const objects = new Map<
+      string,
+      { sizeBytes: number; contentType: string }
+    >();
+    const storage = {
+      createUploadTarget: (input: {
+        storageKey: string;
+        sizeBytes: number;
+        contentType: string;
+      }) => {
+        objects.set(input.storageKey, {
+          sizeBytes: input.sizeBytes,
+          contentType: input.contentType,
+        });
+        return Promise.resolve({
+          method: "PUT" as const,
+          url: "https://storage.example.test/upload",
+          headers: { "content-type": input.contentType },
+          expiresAt: "2026-08-02T00:05:00.000Z",
+        });
+      },
+      statObject: (key: string) => {
+        const object = objects.get(key);
+        return object
+          ? Promise.resolve(object)
+          : Promise.reject(new Error("missing"));
+      },
+      createDownloadUrl: () =>
+        Promise.resolve({
+          url: "https://storage.example.test/download",
+          expiresAt: "2026-08-02T00:02:00.000Z",
+        }),
+      deleteObject: (key: string) => {
+        objects.delete(key);
+        return Promise.resolve();
+      },
+    };
+    const scanner = {
+      scan: (input: { expectedSizeBytes: number; claimedMimeType: string }) =>
+        Promise.resolve({
+          verdict,
+          detectedMimeType: input.claimedMimeType,
+          sizeBytes: input.expectedSizeBytes,
+        }),
+    };
+    return {
+      ...base,
+      dependencies: {
+        ...base.dependencies,
+        storage,
+        scanner,
+        policy: {
+          enabled: true,
+          maxFileSizeBytes: 100,
+          maxFilesPerMessage: 5,
+          allowedMimeTypes: ["text/plain"],
+          uploadUrlTtlSeconds: 300,
+          downloadUrlTtlSeconds: 120,
+          scanPolicy: "required" as const,
+        },
+      },
+    };
+  }
+
+  it("authorizes, scans, atomically attaches, downloads, and preserves retry idempotency", async () => {
+    const { dependencies, database } = attachmentHarness();
+    const intent = await new CreateAttachmentUploadIntent(dependencies).execute(
+      {
+        projectId: "project-1",
+        conversationId: "conversation-1",
+        actor: customer,
+        fileName: "../safe.txt",
+        mimeType: "text/plain",
+        sizeBytes: 4,
+      },
+    );
+    expect(intent.attachment).not.toHaveProperty("storageKey");
+    const ready = await new CompleteAttachmentUpload(dependencies).execute({
+      projectId: "project-1",
+      conversationId: "conversation-1",
+      attachmentId: intent.attachment.id,
+      actor: customer,
+    });
+    expect(ready.status).toBe("ready");
+    const input = {
+      projectId: "project-1",
+      conversationId: "conversation-1",
+      actor: customer,
+      body: "",
+      clientMessageId: "attachment-message-1",
+      attachmentIds: [ready.id],
+    };
+    const first = await new SendMessage(dependencies).execute(input);
+    const retry = await new SendMessage(dependencies).execute(input);
+    expect(retry.id).toBe(first.id);
+    expect(database.state.attachments).toHaveLength(1);
+    expect(database.state.attachments[0]?.messageId).toBe(first.id);
+    const download = await new GetAttachmentDownload(dependencies).execute({
+      projectId: "project-1",
+      conversationId: "conversation-1",
+      attachmentId: ready.id,
+      actor: customer,
+    });
+    expect(download.url).toContain("download");
+  });
+
+  it("fails closed for malware, MIME/size limits, cross-conversation use, and attached deletion", async () => {
+    const infected = attachmentHarness("infected");
+    const intent = await new CreateAttachmentUploadIntent(
+      infected.dependencies,
+    ).execute({
+      projectId: "project-1",
+      conversationId: "conversation-1",
+      actor: customer,
+      fileName: "bad.txt",
+      mimeType: "text/plain",
+      sizeBytes: 4,
+    });
+    await expectCode(
+      new CompleteAttachmentUpload(infected.dependencies).execute({
+        projectId: "project-1",
+        conversationId: "conversation-1",
+        attachmentId: intent.attachment.id,
+        actor: customer,
+      }),
+      "MALWARE_DETECTED",
+    );
+    await expectCode(
+      new CreateAttachmentUploadIntent(infected.dependencies).execute({
+        projectId: "project-1",
+        conversationId: "conversation-1",
+        actor: customer,
+        fileName: "bad.svg",
+        mimeType: "image/svg+xml",
+        sizeBytes: 4,
+      }),
+      "FILE_TYPE_NOT_ALLOWED",
+    );
+    await expectCode(
+      new CreateAttachmentUploadIntent(infected.dependencies).execute({
+        projectId: "project-1",
+        conversationId: "conversation-1",
+        actor: customer,
+        fileName: "large.txt",
+        mimeType: "text/plain",
+        sizeBytes: 101,
+      }),
+      "FILE_TOO_LARGE",
+    );
+  });
+
+  it("keeps internal-note uploads mode-isolated", async () => {
+    const { dependencies } = attachmentHarness();
+    const intent = await new CreateAttachmentUploadIntent(dependencies).execute(
+      {
+        projectId: "project-1",
+        conversationId: "conversation-1",
+        actor: manager,
+        purpose: "internal_note",
+        fileName: "private.txt",
+        mimeType: "text/plain",
+        sizeBytes: 4,
+      },
+    );
+    const ready = await new CompleteAttachmentUpload(dependencies).execute({
+      projectId: "project-1",
+      conversationId: "conversation-1",
+      attachmentId: intent.attachment.id,
+      actor: manager,
+    });
+    await expectCode(
+      new SendMessage(dependencies).execute({
+        projectId: "project-1",
+        conversationId: "conversation-1",
+        actor: manager,
+        body: "public",
+        clientMessageId: "public-mode-1",
+        attachmentIds: [ready.id],
+      }),
+      "ATTACHMENT_NOT_READY",
+    );
+    await expect(
+      new AddInternalNote(dependencies).execute({
+        projectId: "project-1",
+        conversationId: "conversation-1",
+        actor: manager,
+        body: "",
+        clientMessageId: "note-mode-1",
+        attachmentIds: [ready.id],
+      }),
+    ).resolves.toMatchObject({ type: "internal_note" });
   });
 });

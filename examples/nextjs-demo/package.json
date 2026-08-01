@@ -17,6 +17,7 @@
     "@crazyglegit/support-nextjs": "workspace:*",
     "@crazyglegit/support-react": "workspace:*",
     "@crazyglegit/support-realtime-socketio": "workspace:*",
+    "@crazyglegit/support-storage-s3": "workspace:*",
     "next": "16.2.12",
     "postgres": "3.4.9",
     "react": "19.2.8",

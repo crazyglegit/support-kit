@@ -4,6 +4,7 @@ import {
   type SupportAuthAdapter,
 } from "@crazyglegit/support";
 import { createDrizzleSupportDatabase } from "@crazyglegit/support-db-drizzle";
+import { createS3StorageAdapter } from "@crazyglegit/support-storage-s3";
 
 const auth: SupportAuthAdapter = {
   getCustomer: (context) => {
@@ -54,11 +55,59 @@ export function createDemoSupportConfig(databaseUrl: string) {
   const database = createDrizzleSupportDatabase({
     connectionString: databaseUrl,
   });
+  const storage = process.env.SUPPORT_DEMO_S3_BUCKET
+    ? createS3StorageAdapter({
+        region: process.env.SUPPORT_DEMO_S3_REGION ?? "us-east-1",
+        bucket: process.env.SUPPORT_DEMO_S3_BUCKET,
+        endpoint:
+          process.env.SUPPORT_DEMO_S3_ENDPOINT ?? "http://127.0.0.1:9000",
+        forcePathStyle: true,
+        allowInsecureDevelopmentEndpoint: true,
+        credentials: {
+          accessKeyId: process.env.SUPPORT_DEMO_S3_ACCESS_KEY ?? "minioadmin",
+          secretAccessKey:
+            process.env.SUPPORT_DEMO_S3_SECRET_KEY ?? "minioadmin",
+        },
+      })
+    : undefined;
   return defineSupportConfig({
     projectKey: "main-app",
     projectInitialization: { mode: "require-existing" },
     database,
     auth,
+    ...(storage
+      ? {
+          storage,
+          attachments: {
+            enabled: true,
+            maxFileSizeBytes: 10_000_000,
+            maxFilesPerMessage: 5,
+            allowedMimeTypes: [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "application/pdf",
+              "text/plain",
+            ],
+            uploadUrlTtlSeconds: 300,
+            downloadUrlTtlSeconds: 60,
+            scanPolicy: "required" as const,
+          },
+          // Development fixture only. It demonstrates the scanner boundary and
+          // must be replaced with a real malware scanner in production.
+          attachmentScanner: {
+            scan: (input: {
+              claimedMimeType: string;
+              expectedSizeBytes: number;
+            }) =>
+              Promise.resolve({
+                verdict: "clean" as const,
+                detectedMimeType: input.claimedMimeType,
+                sizeBytes: input.expectedSizeBytes,
+              }),
+          },
+        }
+      : {}),
     widget: { title: "Demo support", greeting: "How can we help?" },
     security: {
       allowedOrigins: [

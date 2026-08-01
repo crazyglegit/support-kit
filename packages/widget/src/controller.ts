@@ -11,6 +11,7 @@ import { io, type Socket } from "socket.io-client";
 import { z } from "zod";
 import { resolveOptions, type ResolvedOptions } from "./config.js";
 import { WidgetHttpClient, WidgetRequestError } from "./http.js";
+import { uploadToPresignedTarget, type DirectUploadHandle } from "./upload.js";
 import type {
   SupportWidgetEvent,
   SupportWidgetEventName,
@@ -25,6 +26,16 @@ interface PendingMessage {
   readonly clientMessageId: string;
   readonly body: string;
   status: "sending" | "failed";
+  readonly attachmentIds?: readonly string[];
+}
+interface PendingUpload {
+  readonly localId: string;
+  readonly file: File;
+  attachmentId?: string;
+  progress: number;
+  status: "uploading" | "ready" | "failed" | "cancelled";
+  error?: string;
+  handle?: DirectUploadHandle;
 }
 interface State {
   open: boolean;
@@ -41,6 +52,7 @@ interface State {
   unread: number;
   agentTyping: boolean;
   newMessages: boolean;
+  uploads: PendingUpload[];
 }
 
 const sessionSchema = z.strictObject({
@@ -56,6 +68,24 @@ const createdSchema = z.strictObject({
   initialMessage: customerMessageSchema.optional(),
 });
 const receiptSchema = z.unknown();
+const attachmentSchema = z.strictObject({
+  id: z.string().min(1),
+  fileName: z.string().min(1).max(255),
+  mediaType: z.string().min(1).max(127),
+  sizeBytes: z.number().int().nonnegative(),
+  status: z.literal("ready"),
+});
+const uploadIntentSchema = z.strictObject({
+  attachment: attachmentSchema
+    .omit({ status: true })
+    .extend({ status: z.literal("pending_upload") }),
+  upload: z.strictObject({
+    method: z.literal("PUT"),
+    url: z.url(),
+    headers: z.record(z.string(), z.string()),
+    expiresAt: z.iso.datetime({ offset: true }),
+  }),
+});
 const PUBLIC_MESSAGE_TYPES = new Set([
   "text",
   "image",
@@ -71,6 +101,7 @@ const CSS = `
 *,*::before,*::after{box-sizing:border-box}button,textarea{font:inherit}button{cursor:pointer}.root{position:fixed;bottom:max(20px,env(safe-area-inset-bottom));display:flex;flex-direction:column;align-items:flex-end;gap:12px;z-index:var(--sw-z)}.root.left{left:max(20px,env(safe-area-inset-left));align-items:flex-start}.root.right{right:max(20px,env(safe-area-inset-right))}
 .launcher{width:56px;height:56px;border:0;border-radius:999px;background:var(--sw-accent);color:#fff;display:grid;place-items:center;box-shadow:0 10px 30px #0003;position:relative}.launcher:focus-visible,.icon:focus-visible,.send:focus-visible,.primary:focus-visible,.row:focus-visible,.retry:focus-visible,textarea:focus-visible{outline:3px solid color-mix(in srgb,var(--sw-accent),white 35%);outline-offset:2px}.launcher svg{width:25px}.badge{position:absolute;right:-4px;top:-5px;min-width:22px;height:22px;padding:0 6px;border-radius:99px;background:#dc2626;color:#fff;border:2px solid var(--sw-bg);font:700 12px/18px var(--sw-font)}
 .panel{width:min(var(--sw-width),calc(100vw - 32px));height:min(var(--sw-height),calc(100dvh - 110px));background:var(--sw-bg);border:1px solid var(--sw-border);border-radius:var(--sw-radius);box-shadow:0 20px 60px #0003;overflow:hidden;overscroll-behavior:contain;display:flex;flex-direction:column}.header{min-height:64px;padding:10px 12px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--sw-border)}.title{font-weight:700;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.icon{width:44px;height:44px;border:0;border-radius:12px;background:transparent;color:inherit;display:grid;place-items:center}.icon:hover{background:var(--sw-agent)}.status{padding:5px 12px;font-size:13px;color:var(--sw-muted);background:var(--sw-agent);text-align:center}.status.error{color:#b42318}.content{flex:1;min-height:0;overflow:auto;padding:20px}.home{display:flex;flex-direction:column;height:100%;justify-content:center}.home h2{font-size:24px;margin:0 0 8px}.muted{color:var(--sw-muted)}.primary,.send{border:0;background:var(--sw-accent);color:#fff;border-radius:12px;min-height:44px;padding:10px 16px;font-weight:650}.secondary{margin-top:10px;border:1px solid var(--sw-border);background:transparent;color:inherit}.rows{display:flex;flex-direction:column;gap:8px}.row{width:100%;text-align:left;border:1px solid var(--sw-border);background:transparent;color:inherit;border-radius:14px;padding:14px}.row strong,.row span{display:block}.row small{color:var(--sw-muted)}.messages{padding:16px;display:flex;flex-direction:column;gap:10px}.bubble{max-width:82%;padding:10px 13px;border-radius:14px;background:var(--sw-agent);white-space:pre-wrap;overflow-wrap:anywhere}.bubble.mine{align-self:flex-end;background:var(--sw-customer);color:#fff}.bubble.pending{opacity:.72}.bubble.failed{border:1px solid #dc2626}.bubble small{display:block;margin-top:4px;opacity:.72;font-size:11px}.retry{border:0;background:transparent;color:inherit;text-decoration:underline;padding:2px}.composer{border-top:1px solid var(--sw-border);padding:10px max(10px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom));display:flex;align-items:flex-end;gap:8px}.composer textarea{resize:none;min-height:44px;max-height:112px;flex:1;border:1px solid var(--sw-border);border-radius:12px;background:var(--sw-bg);color:inherit;padding:10px 12px}.send{padding-inline:14px}.empty{text-align:center;color:var(--sw-muted);margin:auto}.typing{font-size:13px;color:var(--sw-muted);padding:0 16px 6px}.announce{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}.counter{font-size:11px;color:var(--sw-muted);text-align:right}.new{position:absolute;bottom:84px;align-self:center;border:1px solid var(--sw-border);border-radius:99px;padding:7px 12px;background:var(--sw-bg);color:inherit;box-shadow:0 4px 14px #0002}
+.attach{width:44px;height:44px;border:1px solid var(--sw-border);border-radius:12px;background:transparent;color:inherit}.upload-list,.message-files{width:100%;display:grid;gap:6px}.file-card{border:1px solid var(--sw-border);border-radius:10px;padding:8px;display:flex;gap:8px;align-items:center;min-width:0}.file-card span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}.file-card button{border:0;background:transparent;color:inherit;text-decoration:underline}.file-card progress{width:72px}.composer{flex-wrap:wrap}
 @media(max-width:520px){.root,.root.left,.root.right{inset:0;display:block}.panel{width:100vw;height:100dvh;max-height:none;border:0;border-radius:0}.launcher{position:fixed;right:max(16px,env(safe-area-inset-right));bottom:max(16px,env(safe-area-inset-bottom))}.root.left .launcher{left:max(16px,env(safe-area-inset-left));right:auto}.panel+.launcher{display:none}.content{padding:18px}.header{padding-top:max(10px,env(safe-area-inset-top))}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
 `;
@@ -128,6 +159,7 @@ export class SupportWidgetController {
     unread: 0,
     agentTyping: false,
     newMessages: false,
+    uploads: [],
   };
   #socket: Socket | undefined;
   #destroyed = false;
@@ -141,6 +173,13 @@ export class SupportWidgetController {
   #accentColor: string;
   #colorScheme: MediaQueryList | undefined;
   #typingActive = false;
+  #attachmentConfig:
+    | {
+        maxFileSizeBytes: number;
+        maxFilesPerMessage: number;
+        allowedMimeTypes: readonly string[];
+      }
+    | undefined;
   readonly #readMessageKeys = new Set<string>();
   readonly #onDocumentKeydown = (event: KeyboardEvent): void => {
     if (event.key === "Escape" && this.#state.open) {
@@ -248,6 +287,7 @@ export class SupportWidgetController {
     this.#colorScheme?.removeEventListener("change", this.#onColorSchemeChange);
     this.#socket?.removeAllListeners();
     this.#socket?.disconnect();
+    for (const upload of this.#state.uploads) upload.handle?.cancel();
     this.#host.remove();
     this.#listeners.clear();
   }
@@ -315,12 +355,31 @@ export class SupportWidgetController {
       else if (a === "send") void this.#send();
       else if (a === "retry" && el.dataset.id) void this.#retry(el.dataset.id);
       else if (a === "new-messages") this.#scrollBottom();
+      else if (a === "pick-files")
+        this.#root
+          .querySelector<HTMLInputElement>('input[type="file"]')
+          ?.click();
+      else if (a === "remove-upload" && el.dataset.id)
+        void this.#removeUpload(el.dataset.id);
+      else if (a === "retry-upload" && el.dataset.id)
+        void this.#retryUpload(el.dataset.id);
+      else if (a === "download" && el.dataset.id)
+        void this.#download(el.dataset.id);
     });
     this.#root.addEventListener("input", (e) => {
       if (e.target instanceof HTMLTextAreaElement) {
         this.#state.draft = e.target.value;
         this.#startTyping();
         this.#updateComposer();
+      }
+    });
+    this.#root.addEventListener("change", (event) => {
+      if (
+        event.target instanceof HTMLInputElement &&
+        event.target.type === "file"
+      ) {
+        this.#selectFiles(event.target.files);
+        event.target.value = "";
       }
     });
     this.#root.addEventListener("keydown", (event) => {
@@ -385,6 +444,9 @@ export class SupportWidgetController {
         this.#accentColor = server.accentColor;
       this.#applyTheme();
       this.#actorType = session.actor.type;
+      this.#attachmentConfig = server.features.attachments
+        ? server.attachments
+        : undefined;
       this.#state.conversations = conversations;
       this.#state.initialized = true;
       this.#state.loading = false;
@@ -539,6 +601,8 @@ export class SupportWidgetController {
     this.#state.activeId = undefined;
     this.#state.messages = [];
     this.#state.pending = [];
+    for (const upload of this.#state.uploads) upload.handle?.cancel();
+    this.#state.uploads = [];
   }
   async #resync(): Promise<void> {
     const id = this.#state.activeId;
@@ -596,7 +660,17 @@ export class SupportWidgetController {
   }
   async #send(): Promise<void> {
     const body = this.#state.draft.trim();
-    if (!body || body.length > this.#options.maxMessageLength) return;
+    const attachmentIds = this.#state.uploads.flatMap((upload) =>
+      upload.status === "ready" && upload.attachmentId
+        ? [upload.attachmentId]
+        : [],
+    );
+    if (
+      (!body && attachmentIds.length === 0) ||
+      this.#state.uploads.some((upload) => upload.status === "uploading") ||
+      body.length > this.#options.maxMessageLength
+    )
+      return;
     this.#stopTyping();
     const existing = this.#state.pending.find(
       (p) => p.body === body && p.status === "failed",
@@ -608,6 +682,7 @@ export class SupportWidgetController {
         clientMessageId: id,
         body,
         status: "sending",
+        attachmentIds,
       });
     this.#state.draft = "";
     this.#render();
@@ -622,11 +697,12 @@ export class SupportWidgetController {
           customerMessageSchema,
           {
             method: "POST",
-            body: JSON.stringify({ body, clientMessageId: id }),
+            body: JSON.stringify({ body, clientMessageId: id, attachmentIds }),
           },
         );
         this.#mergeMessages([message]);
         this.#emit("message.sent", { conversationId: message.conversationId });
+        this.#state.uploads = [];
       }
     } catch (error) {
       const pending = this.#state.pending.find((p) => p.clientMessageId === id);
@@ -663,6 +739,130 @@ export class SupportWidgetController {
     if (!pending) return;
     this.#state.draft = pending.body;
     await this.#send();
+  }
+  #selectFiles(files: FileList | null): void {
+    if (!files || !this.#attachmentConfig || !this.#state.activeId) return;
+    const remaining =
+      this.#attachmentConfig.maxFilesPerMessage - this.#state.uploads.length;
+    for (const file of [...files].slice(0, Math.max(0, remaining))) {
+      const item: PendingUpload = {
+        localId: crypto.randomUUID(),
+        file,
+        progress: 0,
+        status: "uploading",
+      };
+      if (file.size > this.#attachmentConfig.maxFileSizeBytes) {
+        item.status = "failed";
+        item.error = "File is too large.";
+      } else if (!this.#attachmentConfig.allowedMimeTypes.includes(file.type)) {
+        item.status = "failed";
+        item.error = "File type is not allowed.";
+      }
+      this.#state.uploads.push(item);
+      if (item.status === "uploading") void this.#upload(item);
+    }
+    this.#render();
+  }
+  async #upload(item: PendingUpload): Promise<void> {
+    const conversationId = this.#state.activeId;
+    if (!conversationId) return;
+    item.status = "uploading";
+    item.progress = 0;
+    delete item.error;
+    this.#render();
+    try {
+      const intent = await this.#http.request(
+        "/attachments/upload-intents",
+        uploadIntentSchema,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            conversationId,
+            fileName: item.file.name,
+            mimeType: item.file.type,
+            sizeBytes: item.file.size,
+          }),
+        },
+      );
+      if (this.#state.activeId !== conversationId) return;
+      item.attachmentId = intent.attachment.id;
+      item.handle = uploadToPresignedTarget(
+        intent.upload,
+        item.file,
+        (progress) => {
+          if (!this.#destroyed && this.#state.activeId === conversationId) {
+            item.progress = progress;
+            this.#render();
+          }
+        },
+      );
+      await item.handle.completed;
+      await this.#http.request(
+        `/attachments/${encodeURIComponent(intent.attachment.id)}/complete?conversationId=${encodeURIComponent(conversationId)}`,
+        attachmentSchema,
+        { method: "POST", body: "{}" },
+      );
+      if (this.#state.activeId !== conversationId) return;
+      item.status = "ready";
+      item.progress = 100;
+      delete item.handle;
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === "AbortError")) {
+        item.status = "failed";
+        item.error =
+          error instanceof DOMException && error.name === "AbortError"
+            ? "Upload cancelled."
+            : "Upload failed.";
+      }
+      delete item.handle;
+    }
+    this.#render();
+  }
+  async #removeUpload(localId: string): Promise<void> {
+    const item = this.#state.uploads.find(
+      (upload) => upload.localId === localId,
+    );
+    if (!item) return;
+    item.status = "cancelled";
+    item.handle?.cancel();
+    this.#state.uploads = this.#state.uploads.filter(
+      (upload) => upload !== item,
+    );
+    if (item.attachmentId && this.#state.activeId) {
+      try {
+        await this.#http.request(
+          `/attachments/${encodeURIComponent(item.attachmentId)}?conversationId=${encodeURIComponent(this.#state.activeId)}`,
+          z.unknown(),
+          { method: "DELETE" },
+        );
+      } catch {
+        // The server remains authoritative and the attachment stays unusable.
+      }
+    }
+    this.#render();
+  }
+  async #retryUpload(localId: string): Promise<void> {
+    const item = this.#state.uploads.find(
+      (upload) => upload.localId === localId,
+    );
+    if (!item) return;
+    delete item.attachmentId;
+    await this.#upload(item);
+  }
+  async #download(attachmentId: string): Promise<void> {
+    if (!this.#state.activeId) return;
+    const result = await this.#http.request(
+      `/attachments/${encodeURIComponent(attachmentId)}/download?conversationId=${encodeURIComponent(this.#state.activeId)}`,
+      z.strictObject({
+        url: z.url(),
+        expiresAt: z.iso.datetime({ offset: true }),
+      }),
+    );
+    const link = document.createElement("a");
+    link.href = result.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.click();
   }
   #startTyping(): void {
     if (!this.#state.activeId || !this.#socket?.connected) return;
@@ -745,7 +945,9 @@ export class SupportWidgetController {
       counter = this.#root.querySelector<HTMLElement>(".counter");
     if (textarea && send) {
       send.disabled =
-        !textarea.value.trim() ||
+        (!textarea.value.trim() &&
+          !this.#state.uploads.some((upload) => upload.status === "ready")) ||
+        this.#state.uploads.some((upload) => upload.status === "uploading") ||
         textarea.value.length > this.#options.maxMessageLength;
       if (counter)
         counter.textContent = `${textarea.value.length}/${this.#options.maxMessageLength}`;
@@ -829,13 +1031,36 @@ export class SupportWidgetController {
       active?.status === "resolved" ||
       active?.status === "closed" ||
       active?.status === "spam";
-    return `${s.loading ? `<div class="content empty" role="status">${escape(o.strings.loading)}</div>` : `<div class="content messages" role="log" aria-live="polite">${s.messages.length || s.pending.length ? [...s.messages.map((m) => `<div class="bubble ${isMine(m) ? "mine" : ""}">${escape(m.body)}<small>${escape(formatDate(m.createdAt))}</small></div>`), ...s.pending.map((p) => `<div class="bubble mine pending ${p.status === "failed" ? "failed" : ""}">${escape(p.body)}<small>${p.status === "failed" ? `${escape(o.strings.messageFailed)} <button class="retry" data-action="retry" data-id="${escape(p.clientMessageId)}">${escape(o.strings.retry)}</button>` : "Sending…"}</small></div>`)].join("") : `<div class="empty">Send the first message in this conversation.</div>`}</div>`}${s.agentTyping ? `<div class="typing" role="status">An agent is typing…</div>` : ""}${s.newMessages ? `<button class="new" data-action="new-messages">${escape(o.strings.newMessages)}</button>` : ""}${terminal ? `<div class="status">${escape(o.strings.resolved)}</div>` : this.#composer()}`;
+    return `${s.loading ? `<div class="content empty" role="status">${escape(o.strings.loading)}</div>` : `<div class="content messages" role="log" aria-live="polite">${s.messages.length || s.pending.length ? [...s.messages.map((m) => `<div class="bubble ${isMine(m) ? "mine" : ""}">${escape(m.body)}${this.#messageFiles(m)}<small>${escape(formatDate(m.createdAt))}</small></div>`), ...s.pending.map((p) => `<div class="bubble mine pending ${p.status === "failed" ? "failed" : ""}">${escape(p.body)}<small>${p.status === "failed" ? `${escape(o.strings.messageFailed)} <button class="retry" data-action="retry" data-id="${escape(p.clientMessageId)}">${escape(o.strings.retry)}</button>` : "Sending…"}</small></div>`)].join("") : `<div class="empty">Send the first message in this conversation.</div>`}</div>`}${s.agentTyping ? `<div class="typing" role="status">An agent is typing…</div>` : ""}${s.newMessages ? `<button class="new" data-action="new-messages">${escape(o.strings.newMessages)}</button>` : ""}${terminal ? `<div class="status">${escape(o.strings.resolved)}</div>` : this.#composer()}`;
+  }
+  #messageFiles(message: CustomerMessage): string {
+    if (!message.attachments?.length) return "";
+    return `<div class="message-files">${message.attachments
+      .map(
+        (attachment) =>
+          `<div class="file-card"><span>📎 ${escape(attachment.fileName)}</span><button data-action="download" data-id="${escape(attachment.id)}" aria-label="Download ${escape(attachment.fileName)}">Download</button></div>`,
+      )
+      .join("")}</div>`;
   }
   #composer(): string {
     const s = this.#state,
       o = this.#options;
     const disabled = s.connection === "offline";
-    return `<div class="composer"><div style="flex:1"><textarea rows="1" maxlength="${o.maxMessageLength}" aria-label="${escape(o.strings.writeMessage)}" placeholder="${escape(o.strings.writeMessage)}" ${disabled ? "disabled" : ""}>${escape(s.draft)}</textarea><div class="counter">${s.draft.length}/${o.maxMessageLength}</div></div><button class="send" data-action="send" ${!s.draft.trim() || disabled ? "disabled" : ""}>${escape(o.strings.send)}</button></div>`;
+    const uploads = s.uploads.length
+      ? `<div class="upload-list" role="status" aria-label="Selected attachments">${s.uploads
+          .map(
+            (upload) =>
+              `<div class="file-card"><span>${escape(upload.file.name)} (${Math.ceil(upload.file.size / 1024)} KB)</span>${upload.status === "uploading" ? `<progress value="${upload.progress}" max="100" aria-label="Uploading ${escape(upload.file.name)}: ${upload.progress}%"></progress>` : upload.status === "failed" ? `<span role="alert">${escape(upload.error ?? "Upload failed.")}</span><button data-action="retry-upload" data-id="${escape(upload.localId)}">Retry</button>` : `<span>Ready</span>`}<button data-action="remove-upload" data-id="${escape(upload.localId)}" aria-label="Remove ${escape(upload.file.name)}">Remove</button></div>`,
+          )
+          .join("")}</div>`
+      : "";
+    const canAttach = Boolean(this.#attachmentConfig && s.activeId);
+    const sendDisabled =
+      (!s.draft.trim() &&
+        !s.uploads.some((upload) => upload.status === "ready")) ||
+      s.uploads.some((upload) => upload.status === "uploading") ||
+      disabled;
+    return `<div class="composer">${uploads}${canAttach ? `<input type="file" hidden multiple accept="${escape(this.#attachmentConfig?.allowedMimeTypes.join(",") ?? "")}"><button class="attach" data-action="pick-files" aria-label="Attach files" ${disabled ? "disabled" : ""}>📎</button>` : ""}<div style="flex:1"><textarea rows="1" maxlength="${o.maxMessageLength}" aria-label="${escape(o.strings.writeMessage)}" placeholder="${escape(o.strings.writeMessage)}" ${disabled ? "disabled" : ""}>${escape(s.draft)}</textarea><div class="counter">${s.draft.length}/${o.maxMessageLength}</div></div><button class="send" data-action="send" ${sendDisabled ? "disabled" : ""}>${escape(o.strings.send)}</button></div>`;
   }
 }
 

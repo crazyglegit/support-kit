@@ -1,0 +1,118 @@
+openapi: 3.1.0
+info: { title: Support Kit HTTP API, version: 0.0.0 }
+paths:
+  /attachments/upload-intents:
+    post:
+      {
+        summary: Create an authorized customer or visitor upload intent,
+        responses: { "201": { $ref: "#/components/responses/UploadIntent" } },
+      }
+  /attachments/{attachmentId}/complete:
+    post:
+      {
+        summary: Verify and scan a customer or visitor upload,
+        parameters:
+          [
+            { $ref: "#/components/parameters/AttachmentId" },
+            { $ref: "#/components/parameters/ConversationId" },
+          ],
+        responses: { "200": { $ref: "#/components/responses/Attachment" } },
+      }
+  /attachments/{attachmentId}:
+    delete:
+      {
+        summary: Delete an authorized pending upload,
+        parameters:
+          [
+            { $ref: "#/components/parameters/AttachmentId" },
+            { $ref: "#/components/parameters/ConversationId" },
+          ],
+        responses: { "200": { description: Deleted } },
+      }
+  /attachments/{attachmentId}/download:
+    get:
+      {
+        summary: Create an authorized temporary download URL,
+        parameters:
+          [
+            { $ref: "#/components/parameters/AttachmentId" },
+            { $ref: "#/components/parameters/ConversationId" },
+          ],
+        responses: { "200": { $ref: "#/components/responses/Download" } },
+      }
+  /agent/attachments/upload-intents:
+    post:
+      {
+        summary: Create an authorized agent reply or note upload intent,
+        responses: { "201": { $ref: "#/components/responses/UploadIntent" } },
+      }
+  /agent/attachments/{attachmentId}/complete:
+    post:
+      {
+        summary: Verify and scan an agent upload,
+        parameters:
+          [
+            { $ref: "#/components/parameters/AttachmentId" },
+            { $ref: "#/components/parameters/ConversationId" },
+          ],
+        responses: { "200": { $ref: "#/components/responses/Attachment" } },
+      }
+  /agent/attachments/{attachmentId}:
+    delete:
+      {
+        summary: Delete an authorized pending agent upload,
+        parameters:
+          [
+            { $ref: "#/components/parameters/AttachmentId" },
+            { $ref: "#/components/parameters/ConversationId" },
+          ],
+        responses: { "200": { description: Deleted } },
+      }
+  /agent/attachments/{attachmentId}/download:
+    get:
+      {
+        summary: Create an authorized temporary agent download URL,
+        parameters:
+          [
+            { $ref: "#/components/parameters/AttachmentId" },
+            { $ref: "#/components/parameters/ConversationId" },
+          ],
+        responses: { "200": { $ref: "#/components/responses/Download" } },
+      }
+components:
+  parameters:
+    AttachmentId:
+      { name: attachmentId, in: path, required: true, schema: { type: string } }
+    ConversationId:
+      {
+        name: conversationId,
+        in: query,
+        required: true,
+        schema: { type: string },
+      }
+  schemas:
+    UploadIntentRequest:
+      type: object
+      additionalProperties: false
+      required: [conversationId, fileName, mimeType, sizeBytes]
+      properties:
+        conversationId: { type: string }
+        fileName: { type: string, maxLength: 512 }
+        mimeType: { type: string, maxLength: 127 }
+        sizeBytes: { type: integer, minimum: 1 }
+        purpose: { enum: [reply, internal_note] }
+    Attachment:
+      type: object
+      additionalProperties: false
+      required: [id, fileName, mediaType, sizeBytes, status]
+      properties:
+        id: { type: string }
+        fileName: { type: string }
+        mediaType: { type: string }
+        sizeBytes: { type: integer, minimum: 0 }
+        status: { enum: [pending_upload, ready] }
+  responses:
+    Attachment: { description: Sanitized attachment metadata }
+    UploadIntent:
+      { description: Sanitized metadata and a short-lived private PUT target }
+    Download: { description: Short-lived authorized private GET URL }

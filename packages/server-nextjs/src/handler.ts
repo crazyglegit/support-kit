@@ -6,10 +6,13 @@ import {
 } from "@crazyglegit/support";
 import {
   apiErrorEnvelopeSchema,
+  attachmentIdsSchema,
+  createUploadIntentSchema,
   conversationStatusSchema,
   type CustomerConversation,
   type CustomerMessage,
   type FeatureFlags,
+  type AttachmentConfig,
   type WidgetConfig,
 } from "@crazyglegit/support-contracts";
 import { z } from "zod";
@@ -21,15 +24,29 @@ const createConversationSchema = z.strictObject({
     clientMessageId: z.string().trim().min(1).max(200),
   }),
 });
-const sendMessageSchema = z.strictObject({
-  body: z.string().trim().min(1).max(50_000),
-  clientMessageId: z.string().trim().min(1).max(200),
-  type: z.enum(["text", "image", "file", "quick_reply"]).optional(),
-});
-const noteSchema = sendMessageSchema.pick({
-  body: true,
-  clientMessageId: true,
-});
+const sendMessageSchema = z
+  .strictObject({
+    body: z.string().trim().max(50_000).default(""),
+    clientMessageId: z.string().trim().min(1).max(200),
+    type: z.enum(["text", "image", "file", "quick_reply"]).optional(),
+    attachmentIds: attachmentIdsSchema.optional(),
+  })
+  .refine(
+    (value) => value.body.length > 0 || (value.attachmentIds?.length ?? 0) > 0,
+    {
+      message: "A message or attachment is required.",
+    },
+  );
+const noteSchema = z
+  .strictObject({
+    body: z.string().trim().max(50_000).default(""),
+    clientMessageId: z.string().trim().min(1).max(200),
+    attachmentIds: attachmentIdsSchema.optional(),
+  })
+  .refine(
+    (value) => value.body.length > 0 || (value.attachmentIds?.length ?? 0) > 0,
+    { message: "A note or attachment is required." },
+  );
 const assignSchema = z.strictObject({ agentId: z.string().trim().min(1) });
 const statusSchema = z.strictObject({ status: conversationStatusSchema });
 
@@ -101,6 +118,13 @@ function customerMessage(
     senderType: message.senderType,
     body: message.body,
     deliveryStatus: message.deliveryStatus,
+    attachments: (message.attachments ?? []).map((attachment) => ({
+      id: attachment.id,
+      fileName: attachment.safeDisplayFilename,
+      mediaType: attachment.detectedMimeType ?? attachment.claimedMimeType,
+      sizeBytes: attachment.sizeBytes,
+      status: "ready" as const,
+    })),
     createdAt: message.createdAt.toISOString(),
     updatedAt: message.updatedAt.toISOString(),
   };
@@ -142,6 +166,13 @@ function agentMessage(
     senderType: message.senderType,
     body: message.body,
     deliveryStatus: message.deliveryStatus,
+    attachments: (message.attachments ?? []).map((attachment) => ({
+      id: attachment.id,
+      fileName: attachment.safeDisplayFilename,
+      mediaType: attachment.detectedMimeType ?? attachment.claimedMimeType,
+      sizeBytes: attachment.sizeBytes,
+      status: "ready" as const,
+    })),
     createdAt: message.createdAt.toISOString(),
     updatedAt: message.updatedAt.toISOString(),
   };
@@ -186,6 +217,24 @@ async function customerActor(
 }
 
 async function body<T>(request: Request, schema: z.ZodType<T>): Promise<T> {
+  const contentType = request.headers
+    .get("content-type")
+    ?.split(";", 1)[0]
+    ?.trim()
+    .toLowerCase();
+  if (contentType !== "application/json")
+    throw new HttpError(
+      "VALIDATION_ERROR",
+      "The request content type must be application/json.",
+      415,
+    );
+  const contentLength = Number(request.headers.get("content-length") ?? "0");
+  if (Number.isFinite(contentLength) && contentLength > 65_536)
+    throw new HttpError(
+      "VALIDATION_ERROR",
+      "The request body is too large.",
+      413,
+    );
   let value: unknown;
   try {
     value = await request.json();
@@ -255,6 +304,20 @@ function statusFor(code: string): number {
     NOT_FOUND: 404,
     CONFLICT: 409,
     INVALID_STATE_TRANSITION: 409,
+    ATTACHMENTS_DISABLED: 404,
+    FILE_TOO_LARGE: 413,
+    FILE_TYPE_NOT_ALLOWED: 415,
+    TOO_MANY_ATTACHMENTS: 400,
+    ATTACHMENT_NOT_READY: 409,
+    ATTACHMENT_REJECTED: 409,
+    ATTACHMENT_ALREADY_ATTACHED: 409,
+    UPLOAD_EXPIRED: 410,
+    UPLOAD_NOT_FOUND: 404,
+    UPLOAD_VERIFICATION_FAILED: 422,
+    MALWARE_DETECTED: 422,
+    SCAN_FAILED: 422,
+    STORAGE_UNAVAILABLE: 503,
+    RATE_LIMITED: 429,
     FEATURE_UNAVAILABLE: 501,
     CONFIGURATION_ERROR: 500,
     SDK_DISPOSED: 503,
@@ -263,12 +326,31 @@ function statusFor(code: string): number {
   return statuses[code] ?? 500;
 }
 
+async function enforceAttachmentRateLimit(
+  limiter:
+    | ((input: {
+        readonly request: Request;
+        readonly operation: "intent" | "complete";
+      }) => Promise<boolean>)
+    | undefined,
+  request: Request,
+  operation: "intent" | "complete",
+): Promise<void> {
+  if (limiter && !(await limiter({ request, operation })))
+    throw new HttpError("RATE_LIMITED", "Too many upload requests.", 429);
+}
+
 async function dispatch(
   support: SupportKit,
   request: Request,
   publicConfiguration: {
     readonly widget?: WidgetConfig;
     readonly features?: FeatureFlags;
+    readonly attachments?: AttachmentConfig;
+    readonly attachmentRateLimit?: (input: {
+      readonly request: Request;
+      readonly operation: "intent" | "complete";
+    }) => Promise<boolean>;
   },
 ): Promise<Response> {
   const parts = pathParts(request);
@@ -303,15 +385,97 @@ async function dispatch(
         ? { locale: publicConfiguration.widget.locale }
         : {}),
       features: {
-        attachments: publicConfiguration.features?.attachments === true,
+        attachments:
+          publicConfiguration.attachments?.enabled === true ||
+          publicConfiguration.features?.attachments === true,
         chatbot: publicConfiguration.features?.chatbot === true,
       },
+      ...(publicConfiguration.attachments?.enabled
+        ? {
+            attachments: {
+              maxFileSizeBytes:
+                publicConfiguration.attachments.maxFileSizeBytes,
+              maxFilesPerMessage:
+                publicConfiguration.attachments.maxFilesPerMessage,
+              allowedMimeTypes:
+                publicConfiguration.attachments.allowedMimeTypes,
+            },
+          }
+        : {}),
     });
   }
 
   if (method === "POST" && parts.length === 1 && parts[0] === "session") {
     const actor = await customerActor(support, request);
     return success({ actor });
+  }
+  if (parts[0] === "attachments") {
+    const actor = await customerActor(support, request);
+    if (
+      method === "POST" &&
+      parts[1] === "upload-intents" &&
+      parts.length === 2
+    ) {
+      await enforceAttachmentRateLimit(
+        publicConfiguration.attachmentRateLimit,
+        request,
+        "intent",
+      );
+      const input = await body(request, createUploadIntentSchema);
+      return success(
+        await support.attachments.createUploadIntent({
+          actor,
+          conversationId: input.conversationId,
+          fileName: input.fileName,
+          mimeType: input.mimeType,
+          sizeBytes: input.sizeBytes,
+          ...(input.purpose ? { purpose: input.purpose } : {}),
+        }),
+        201,
+      );
+    }
+    const attachmentId = parts[1];
+    if (attachmentId && (parts.length === 2 || parts.length === 3)) {
+      const conversationId = new URL(request.url).searchParams.get(
+        "conversationId",
+      );
+      if (!conversationId)
+        throw new HttpError(
+          "VALIDATION_ERROR",
+          "A conversation is required.",
+          400,
+        );
+      if (method === "POST" && parts[2] === "complete")
+        await enforceAttachmentRateLimit(
+          publicConfiguration.attachmentRateLimit,
+          request,
+          "complete",
+        );
+      if (method === "POST" && parts[2] === "complete")
+        return success(
+          await support.attachments.completeUpload({
+            actor,
+            attachmentId,
+            conversationId,
+          }),
+        );
+      if (method === "DELETE" && parts.length === 2) {
+        await support.attachments.deletePending({
+          actor,
+          attachmentId,
+          conversationId,
+        });
+        return success({ deleted: true });
+      }
+      if (method === "GET" && parts[2] === "download")
+        return success(
+          await support.attachments.getDownload({
+            actor,
+            attachmentId,
+            conversationId,
+          }),
+        );
+    }
   }
   if (
     method === "POST" &&
@@ -376,6 +540,9 @@ async function dispatch(
           conversationId,
           actor,
           ...(input.type ? { type: input.type } : {}),
+          ...(input.attachmentIds
+            ? { attachmentIds: input.attachmentIds }
+            : {}),
         });
         return success(customerMessage(sent), 201);
       }
@@ -438,6 +605,9 @@ async function dispatch(
                 conversationId,
                 actor,
                 ...(input.type ? { type: input.type } : {}),
+                ...(input.attachmentIds
+                  ? { attachmentIds: input.attachmentIds }
+                  : {}),
               }),
             ),
             201,
@@ -448,9 +618,13 @@ async function dispatch(
           return success(
             agentMessage(
               await support.conversations.addInternalNote({
-                ...input,
+                body: input.body,
+                clientMessageId: input.clientMessageId,
                 conversationId,
                 actor,
+                ...(input.attachmentIds
+                  ? { attachmentIds: input.attachmentIds }
+                  : {}),
               }),
             ),
             201,
@@ -527,6 +701,74 @@ async function dispatch(
       );
     }
   }
+  if (parts[0] === "agent" && parts[1] === "attachments") {
+    const actor = await support.auth.resolveAgent(authContext(request));
+    if (
+      method === "POST" &&
+      parts[2] === "upload-intents" &&
+      parts.length === 3
+    ) {
+      await enforceAttachmentRateLimit(
+        publicConfiguration.attachmentRateLimit,
+        request,
+        "intent",
+      );
+      const input = await body(request, createUploadIntentSchema);
+      return success(
+        await support.attachments.createUploadIntent({
+          actor,
+          conversationId: input.conversationId,
+          fileName: input.fileName,
+          mimeType: input.mimeType,
+          sizeBytes: input.sizeBytes,
+          ...(input.purpose ? { purpose: input.purpose } : {}),
+        }),
+        201,
+      );
+    }
+    const attachmentId = parts[2];
+    if (attachmentId && (parts.length === 3 || parts.length === 4)) {
+      const conversationId = new URL(request.url).searchParams.get(
+        "conversationId",
+      );
+      if (!conversationId)
+        throw new HttpError(
+          "VALIDATION_ERROR",
+          "A conversation is required.",
+          400,
+        );
+      if (method === "POST" && parts[3] === "complete")
+        await enforceAttachmentRateLimit(
+          publicConfiguration.attachmentRateLimit,
+          request,
+          "complete",
+        );
+      if (method === "POST" && parts[3] === "complete")
+        return success(
+          await support.attachments.completeUpload({
+            actor,
+            attachmentId,
+            conversationId,
+          }),
+        );
+      if (method === "DELETE" && parts.length === 3) {
+        await support.attachments.deletePending({
+          actor,
+          attachmentId,
+          conversationId,
+        });
+        return success({ deleted: true });
+      }
+      if (method === "GET" && parts[3] === "download")
+        return success(
+          await support.attachments.getDownload({
+            actor,
+            attachmentId,
+            conversationId,
+          }),
+        );
+    }
+  }
   if (
     method === "POST" &&
     parts[0] === "agent" &&
@@ -549,6 +791,11 @@ export function createSupportServer(
     readonly allowedOrigins: readonly string[];
     readonly widget?: WidgetConfig;
     readonly features?: FeatureFlags;
+    readonly attachments?: AttachmentConfig;
+    readonly attachmentRateLimit?: (input: {
+      readonly request: Request;
+      readonly operation: "intent" | "complete";
+    }) => Promise<boolean>;
   },
 ): SupportRouteHandlers {
   let resolved: Promise<SupportKit> | undefined;
@@ -610,5 +857,6 @@ export function createSupportHandler(
     allowedOrigins: config.security.allowedOrigins,
     ...(config.widget ? { widget: config.widget } : {}),
     ...(config.features ? { features: config.features } : {}),
+    ...(config.attachments ? { attachments: config.attachments } : {}),
   });
 }

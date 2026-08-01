@@ -1,5 +1,9 @@
 import {
   AddConversationTag,
+  CompleteAttachmentUpload,
+  CreateAttachmentUploadIntent,
+  DeletePendingAttachment,
+  GetAttachmentDownload,
   AddInternalNote,
   AssignConversation,
   ChangeConversationStatus,
@@ -22,6 +26,7 @@ import { DomainError, type Project } from "@crazyglegit/support-core";
 import {
   agentIdentitySchema,
   customerIdentitySchema,
+  DEFAULT_ATTACHMENT_MIME_TYPES,
   defineSupportConfig,
   visitorIdentitySchema,
   type SupportConfig,
@@ -152,6 +157,7 @@ class ComposedSupportKit implements SupportKit {
   public readonly customers: SupportKit["customers"];
   public readonly agents: SupportKit["agents"];
   public readonly tags: SupportKit["tags"];
+  public readonly attachments: SupportKit["attachments"];
   public readonly auth: SupportKit["auth"];
   public readonly events: SupportKit["events"];
 
@@ -186,6 +192,33 @@ class ComposedSupportKit implements SupportKit {
       addTag: new AddConversationTag(dependencies),
       removeTag: new RemoveConversationTag(dependencies),
     };
+    const attachmentPolicy = config.attachments ?? {
+      enabled: config.features?.attachments === true,
+      maxFileSizeBytes: 26_214_400,
+      maxFilesPerMessage: 5,
+      allowedMimeTypes: [...DEFAULT_ATTACHMENT_MIME_TYPES],
+      uploadUrlTtlSeconds: 300,
+      downloadUrlTtlSeconds: 120,
+      scanPolicy: "required" as const,
+    };
+    const attachmentDependencies = config.storage
+      ? {
+          ...dependencies,
+          storage: config.storage,
+          ...(config.attachmentScanner
+            ? { scanner: config.attachmentScanner }
+            : {}),
+          policy: attachmentPolicy,
+        }
+      : undefined;
+    const attachmentUseCases = attachmentDependencies
+      ? {
+          intent: new CreateAttachmentUploadIntent(attachmentDependencies),
+          complete: new CompleteAttachmentUpload(attachmentDependencies),
+          delete: new DeletePendingAttachment(attachmentDependencies),
+          download: new GetAttachmentDownload(attachmentDependencies),
+        }
+      : undefined;
     this.conversations = {
       create: (input) =>
         this.run(() => useCases.create.execute({ ...input, projectId })),
@@ -225,6 +258,32 @@ class ComposedSupportKit implements SupportKit {
         this.run(() => useCases.addTag.execute({ ...input, projectId })),
       remove: (input) =>
         this.run(() => useCases.removeTag.execute({ ...input, projectId })),
+    };
+    const requireAttachmentUseCases = () => {
+      if (!attachmentUseCases)
+        throw new SupportKitError(
+          "ATTACHMENTS_DISABLED",
+          "Attachments are not available.",
+        );
+      return attachmentUseCases;
+    };
+    this.attachments = {
+      createUploadIntent: (input) =>
+        this.run(() =>
+          requireAttachmentUseCases().intent.execute({ ...input, projectId }),
+        ),
+      completeUpload: (input) =>
+        this.run(() =>
+          requireAttachmentUseCases().complete.execute({ ...input, projectId }),
+        ),
+      deletePending: (input) =>
+        this.run(() =>
+          requireAttachmentUseCases().delete.execute({ ...input, projectId }),
+        ),
+      getDownload: (input) =>
+        this.run(() =>
+          requireAttachmentUseCases().download.execute({ ...input, projectId }),
+        ),
     };
     this.auth = {
       resolveCustomer: (context) =>
@@ -364,6 +423,7 @@ class ComposedSupportKit implements SupportKit {
       this.#config.auth,
       this.#config.realtime,
       this.#config.storage,
+      this.#config.attachmentScanner,
       this.#config.notifications,
       this.#config.ai,
     ];

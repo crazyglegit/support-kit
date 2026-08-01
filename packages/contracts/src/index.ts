@@ -10,9 +10,30 @@ export type {
   ApiErrorEnvelope,
   ApiSuccessEnvelope,
 } from "./api.js";
+export {
+  ATTACHMENT_SCAN_STATUSES,
+  ATTACHMENT_STATUSES,
+  DEFAULT_ATTACHMENT_MIME_TYPES,
+  attachmentIdsSchema,
+  attachmentScanStatusSchema,
+  attachmentStatusSchema,
+  createUploadIntentSchema,
+  publicAttachmentSchema,
+  uploadTargetSchema,
+} from "./attachments.js";
+export type {
+  AttachmentUploadIntent,
+  CreateUploadIntentRequest,
+  PublicAttachment,
+} from "./attachments.js";
 export type {
   AdapterHealthResult,
-  CreateUploadInput,
+  AttachmentScannerAdapter,
+  AttachmentScanInput,
+  AttachmentScanResult,
+  CreateDownloadUrlInput,
+  CreateUploadTargetInput,
+  StoredObjectMetadata,
   SupportAIAdapter,
   SupportAdapterLifecycle,
   SupportAIDraftInput,
@@ -27,6 +48,7 @@ export type {
   UploadTarget,
 } from "./adapters.js";
 export {
+  attachmentConfigSchema,
   defineSupportConfig,
   featureFlagsSchema,
   lifecycleConfigSchema,
@@ -37,6 +59,7 @@ export {
   widgetConfigSchema,
 } from "./config.js";
 export type {
+  AttachmentConfig,
   FeatureFlags,
   LifecycleConfig,
   ProjectInitializationPolicy,

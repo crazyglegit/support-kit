@@ -10,8 +10,13 @@ import {
   type DashboardMessage,
 } from "@crazyglegit/support-contracts/dashboard";
 import { io, type Socket } from "socket.io-client";
+import { z } from "zod";
 import { resolveDashboardOptions } from "./config.js";
 import { DashboardHttpClient, DashboardHttpError } from "./http.js";
+import {
+  uploadToPresignedTarget,
+  type DashboardUploadHandle,
+} from "./upload.js";
 import type {
   SupportDashboardEvent,
   SupportDashboardEventName,
@@ -22,10 +27,51 @@ import type {
 
 type Connection = "connecting" | "connected" | "reconnecting" | "offline";
 type Mode = "reply" | "note";
+interface PendingUpload {
+  readonly localId: string;
+  readonly file: File;
+  attachmentId?: string;
+  status: "uploading" | "ready" | "failed" | "cancelled";
+  progress: number;
+  error?: string;
+  handle?: DashboardUploadHandle;
+}
+const attachmentSchema = z.strictObject({
+  id: z.string().min(1),
+  fileName: z.string().min(1),
+  mediaType: z.string().min(1),
+  sizeBytes: z.number().int().nonnegative(),
+  status: z.literal("ready"),
+});
+const attachmentConfigSchema = z.looseObject({
+  features: z.strictObject({
+    attachments: z.boolean(),
+    chatbot: z.boolean(),
+  }),
+  attachments: z
+    .strictObject({
+      maxFileSizeBytes: z.number().int().positive(),
+      maxFilesPerMessage: z.number().int().positive(),
+      allowedMimeTypes: z.array(z.string()),
+    })
+    .optional(),
+});
+const uploadIntentSchema = z.strictObject({
+  attachment: attachmentSchema
+    .omit({ status: true })
+    .extend({ status: z.literal("pending_upload") }),
+  upload: z.strictObject({
+    method: z.literal("PUT"),
+    url: z.url(),
+    headers: z.record(z.string(), z.string()),
+    expiresAt: z.string(),
+  }),
+});
 const css = `
 .sk-dashboard{--sk-accent:#2563eb;--sk-bg:#f8fafc;--sk-panel:#fff;--sk-fg:#172033;--sk-muted:#64748b;--sk-border:#dce3ec;min-height:620px;height:min(820px,calc(100vh - 32px));display:grid;grid-template-columns:minmax(280px,330px) minmax(360px,1fr) minmax(260px,310px);color:var(--sk-fg);background:var(--sk-bg);border:1px solid var(--sk-border);border-radius:16px;overflow:hidden;font:14px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color-scheme:light}
 .sk-dashboard[data-theme=dark]{--sk-bg:#0b1120;--sk-panel:#111827;--sk-fg:#e5e7eb;--sk-muted:#9ca3af;--sk-border:#293548;color-scheme:dark}.sk-panel{min-width:0;background:var(--sk-panel);border-right:1px solid var(--sk-border);display:flex;flex-direction:column}.sk-panel:last-child{border:0}.sk-head{padding:16px;border-bottom:1px solid var(--sk-border);display:flex;align-items:center;gap:8px;min-height:48px}.sk-head h1,.sk-head h2{font-size:16px;margin:0;flex:1}.sk-controls{display:flex;gap:8px;flex-wrap:wrap}.sk-btn,.sk-select{min-height:40px;border:1px solid var(--sk-border);border-radius:9px;background:var(--sk-panel);color:var(--sk-fg);padding:8px 11px;font:inherit}.sk-btn{cursor:pointer}.sk-btn-primary{background:var(--sk-accent);border-color:var(--sk-accent);color:#fff}.sk-btn-note[aria-pressed=true]{background:#fef3c7;color:#713f12;border-color:#f59e0b}.sk-btn:focus-visible,.sk-select:focus-visible,.sk-compose:focus-visible,.sk-item:focus-visible{outline:3px solid color-mix(in srgb,var(--sk-accent) 45%,transparent);outline-offset:2px}.sk-inbox{overflow:auto;list-style:none;padding:8px;margin:0}.sk-item{width:100%;text-align:left;border:0;border-bottom:1px solid var(--sk-border);background:transparent;color:inherit;padding:13px;border-radius:9px;cursor:pointer}.sk-item:hover,.sk-item[aria-current=true]{background:color-mix(in srgb,var(--sk-accent) 9%,var(--sk-panel))}.sk-item strong,.sk-item span{display:block}.sk-meta{color:var(--sk-muted);font-size:12px;margin-top:4px}.sk-state{margin:auto;padding:28px;text-align:center;color:var(--sk-muted)}.sk-timeline{flex:1;overflow:auto;padding:20px;overscroll-behavior:contain}.sk-message{max-width:74%;margin:10px 0;padding:10px 12px;background:#e7eef8;border-radius:12px;white-space:pre-wrap;overflow-wrap:anywhere}.sk-message-agent{margin-left:auto;background:color-mix(in srgb,var(--sk-accent) 16%,var(--sk-panel))}.sk-message-note{max-width:86%;background:#fef3c7;color:#713f12;border:1px solid #f59e0b}.sk-message-note::before{content:"Internal note";display:block;font-weight:700;font-size:12px;margin-bottom:5px}.sk-compose-wrap{border-top:1px solid var(--sk-border);padding:12px}.sk-compose{box-sizing:border-box;width:100%;min-height:86px;resize:vertical;border:1px solid var(--sk-border);border-radius:10px;background:var(--sk-panel);color:var(--sk-fg);padding:10px;font:inherit}.sk-compose-actions{display:flex;align-items:center;gap:8px;margin-bottom:8px}.sk-compose-actions .sk-send{margin-left:auto}.sk-live{padding:7px 14px;background:color-mix(in srgb,var(--sk-accent) 8%,var(--sk-panel));color:var(--sk-muted)}.sk-detail{padding:18px;overflow:auto}.sk-detail dl{margin:0}.sk-detail dt{font-weight:700;margin-top:14px}.sk-detail dd{margin:3px 0;color:var(--sk-muted)}.sk-back{display:none}.sk-visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-@media(max-width:980px){.sk-dashboard{grid-template-columns:300px 1fr}.sk-context{display:none}}@media(max-width:680px){.sk-dashboard{position:fixed;inset:0;width:100%;height:100dvh;min-height:0;border:0;border-radius:0;grid-template-columns:1fr;padding-bottom:env(safe-area-inset-bottom)}.sk-dashboard[data-mobile-view=conversation] .sk-inbox-panel{display:none}.sk-dashboard:not([data-mobile-view=conversation]) .sk-conversation{display:none}.sk-back{display:inline-flex}.sk-message{max-width:88%}}@media(prefers-reduced-motion:reduce){.sk-dashboard *{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
+.sk-files{display:grid;gap:6px;margin-top:8px}.sk-file{display:flex;align-items:center;gap:8px;border:1px solid var(--sk-border);border-radius:8px;padding:7px;min-width:0}.sk-file span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sk-file progress{width:90px}.sk-file-note{border-color:#d97706;background:#fffbeb}.sk-file-input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+@media(max-width:980px){.sk-dashboard{grid-template-columns:300px 1fr}.sk-context{display:none}}@media(max-width:680px){.sk-dashboard{position:fixed;inset:0;width:100%;height:100dvh;min-height:0;border:0;border-radius:0;grid-template-columns:1fr;padding-bottom:env(safe-area-inset-bottom)}.sk-dashboard[data-mobile-view=conversation] .sk-inbox-panel{display:none}.sk-dashboard:not([data-mobile-view=conversation]) .sk-conversation{display:none}.sk-back{display:inline-flex}.sk-message{max-width:88%}.sk-file{flex-wrap:wrap}}@media(prefers-reduced-motion:reduce){.sk-dashboard *{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
 `;
 
 function id() {
@@ -73,6 +119,8 @@ export class SupportDashboardController {
   #initialized = false;
   #seenEvents = new Set<string>();
   #drafts = new Map<string, string>();
+  #uploads = new Map<string, PendingUpload[]>();
+  #attachmentConfig: z.infer<typeof attachmentConfigSchema>["attachments"];
   #filters: SupportDashboardFilters;
   #root: HTMLDivElement;
   #media?: MediaQueryList;
@@ -102,6 +150,16 @@ export class SupportDashboardController {
     this.#initialized = true;
     this.#renderLoading();
     try {
+      try {
+        const configuration = attachmentConfigSchema.parse(
+          await this.#http.request<unknown>("/widget/config"),
+        );
+        this.#attachmentConfig = configuration.features.attachments
+          ? configuration.attachments
+          : undefined;
+      } catch {
+        this.#attachmentConfig = undefined;
+      }
       await this.#resolveSession();
       if (!this.#has("conversation.read")) {
         this.#renderUnauthorized();
@@ -221,6 +279,8 @@ export class SupportDashboardController {
     this.#http.dispose();
     this.#socket?.removeAllListeners();
     this.#socket?.disconnect();
+    for (const uploads of this.#uploads.values())
+      for (const upload of uploads) upload.handle?.cancel();
     if (this.#media && this.#mediaListener)
       this.#media.removeEventListener("change", this.#mediaListener);
     this.#listeners.clear();
@@ -228,6 +288,7 @@ export class SupportDashboardController {
     this.#conversations = [];
     this.#messages = [];
     this.#drafts.clear();
+    this.#uploads.clear();
     this.#seenEvents.clear();
     this.#readMessageIds.clear();
     this.#active = undefined;
@@ -243,6 +304,9 @@ export class SupportDashboardController {
     this.#conversations = [];
     this.#messages = [];
     this.#drafts.clear();
+    for (const uploads of this.#uploads.values())
+      for (const upload of uploads) upload.handle?.cancel();
+    this.#uploads.clear();
     this.#seenEvents.clear();
     this.#readMessageIds.clear();
     this.#customerTyping = false;
@@ -443,7 +507,17 @@ export class SupportDashboardController {
     this.#stopTyping();
     const key = `${this.#active}:${this.#mode}`;
     const body = this.#drafts.get(key)?.trim();
-    if (!body) return;
+    const uploads = this.#uploads.get(key) ?? [];
+    const attachmentIds = uploads.flatMap((upload) =>
+      upload.status === "ready" && upload.attachmentId
+        ? [upload.attachmentId]
+        : [],
+    );
+    if (
+      (!body && attachmentIds.length === 0) ||
+      uploads.some((upload) => upload.status === "uploading")
+    )
+      return;
     const clientMessageId = id();
     const optimistic = dashboardMessageSchema.parse({
       id: `pending-${clientMessageId}`,
@@ -451,7 +525,20 @@ export class SupportDashboardController {
       clientMessageId,
       type: this.#mode === "note" ? "internal_note" : "text",
       senderType: "agent",
-      body,
+      body: body ?? "",
+      attachments: uploads.flatMap((upload) =>
+        upload.status === "ready" && upload.attachmentId
+          ? [
+              {
+                id: upload.attachmentId,
+                fileName: upload.file.name,
+                mediaType: upload.file.type,
+                sizeBytes: upload.file.size,
+                status: "ready" as const,
+              },
+            ]
+          : [],
+      ),
       deliveryStatus: "pending",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -463,11 +550,19 @@ export class SupportDashboardController {
       const sent = dashboardMessageSchema.parse(
         await this.#http.request<unknown>(
           `/agent/conversations/${encodeURIComponent(this.#active)}/${route}`,
-          { method: "POST", body: JSON.stringify({ body, clientMessageId }) },
+          {
+            method: "POST",
+            body: JSON.stringify({
+              body: body ?? "",
+              clientMessageId,
+              attachmentIds,
+            }),
+          },
         ),
       );
       this.#messages = mergeMessages(this.#messages, [sent]);
       this.#drafts.delete(key);
+      this.#uploads.delete(key);
       this.#render();
       this.#emit("message.sent", { conversationId: this.#active });
     } catch (error) {
@@ -513,6 +608,9 @@ export class SupportDashboardController {
             body: JSON.stringify({
               body: failed.body,
               clientMessageId,
+              attachmentIds: (failed.attachments ?? []).map(
+                (attachment) => attachment.id,
+              ),
             }),
           },
         ),
@@ -528,6 +626,135 @@ export class SupportDashboardController {
       this.#messages = mergeMessages(this.#messages, [failed]);
       this.#render();
     }
+  }
+  #uploadKey(): string | undefined {
+    return this.#active ? `${this.#active}:${this.#mode}` : undefined;
+  }
+  #selectFiles(files: FileList | null): void {
+    const key = this.#uploadKey();
+    if (!key || !files || !this.#attachmentConfig) return;
+    const queue = this.#uploads.get(key) ?? [];
+    const remaining = this.#attachmentConfig.maxFilesPerMessage - queue.length;
+    for (const file of [...files].slice(0, Math.max(0, remaining))) {
+      const upload: PendingUpload = {
+        localId: id(),
+        file,
+        status: "uploading",
+        progress: 0,
+      };
+      if (file.size > this.#attachmentConfig.maxFileSizeBytes) {
+        upload.status = "failed";
+        upload.error = "File is too large.";
+      } else if (!this.#attachmentConfig.allowedMimeTypes.includes(file.type)) {
+        upload.status = "failed";
+        upload.error = "File type is not allowed.";
+      }
+      queue.push(upload);
+      if (upload.status === "uploading") void this.#upload(key, upload);
+    }
+    this.#uploads.set(key, queue);
+    this.#render();
+  }
+  async #upload(key: string, upload: PendingUpload) {
+    const [conversationId] = key.split(":");
+    if (!conversationId) return;
+    upload.status = "uploading";
+    upload.progress = 0;
+    delete upload.error;
+    this.#render();
+    try {
+      const intent = uploadIntentSchema.parse(
+        await this.#http.request<unknown>("/agent/attachments/upload-intents", {
+          method: "POST",
+          body: JSON.stringify({
+            conversationId,
+            fileName: upload.file.name,
+            mimeType: upload.file.type,
+            sizeBytes: upload.file.size,
+            purpose: key.endsWith(":note") ? "internal_note" : "reply",
+          }),
+        }),
+      );
+      if (this.#destroyed || !this.#uploads.get(key)?.includes(upload)) return;
+      upload.attachmentId = intent.attachment.id;
+      upload.handle = uploadToPresignedTarget(
+        intent.upload,
+        upload.file,
+        (progress) => {
+          if (!this.#destroyed && this.#uploads.get(key)?.includes(upload)) {
+            upload.progress = progress;
+            this.#render();
+          }
+        },
+      );
+      await upload.handle.completed;
+      attachmentSchema.parse(
+        await this.#http.request<unknown>(
+          `/agent/attachments/${encodeURIComponent(intent.attachment.id)}/complete?conversationId=${encodeURIComponent(conversationId)}`,
+          { method: "POST", body: "{}" },
+        ),
+      );
+      if (!this.#uploads.get(key)?.includes(upload)) return;
+      upload.status = "ready";
+      upload.progress = 100;
+      delete upload.handle;
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === "AbortError")) {
+        upload.status = "failed";
+        upload.error =
+          error instanceof Error ? error.message : "Upload failed.";
+      }
+      delete upload.handle;
+    }
+    this.#render();
+  }
+  async #removeUpload(localId: string) {
+    const key = this.#uploadKey();
+    if (!key) return;
+    const queue = this.#uploads.get(key) ?? [];
+    const upload = queue.find((item) => item.localId === localId);
+    if (!upload) return;
+    upload.status = "cancelled";
+    upload.handle?.cancel();
+    this.#uploads.set(
+      key,
+      queue.filter((item) => item !== upload),
+    );
+    if (upload.attachmentId && this.#active) {
+      try {
+        await this.#http.request(
+          `/agent/attachments/${encodeURIComponent(upload.attachmentId)}?conversationId=${encodeURIComponent(this.#active)}`,
+          { method: "DELETE" },
+        );
+      } catch {
+        /* pending file stays server-side and unusable */
+      }
+    }
+    this.#render();
+  }
+  async #retryUpload(localId: string) {
+    const key = this.#uploadKey();
+    const upload = key
+      ? this.#uploads.get(key)?.find((item) => item.localId === localId)
+      : undefined;
+    if (!key || !upload) return;
+    delete upload.attachmentId;
+    await this.#upload(key, upload);
+  }
+  async #download(attachmentId: string) {
+    if (!this.#active) return;
+    const result = z
+      .strictObject({ url: z.url(), expiresAt: z.string() })
+      .parse(
+        await this.#http.request<unknown>(
+          `/agent/attachments/${encodeURIComponent(attachmentId)}/download?conversationId=${encodeURIComponent(this.#active)}`,
+        ),
+      );
+    const link = document.createElement("a");
+    link.href = result.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.click();
   }
   async #action(action: "assign" | "resolve" | "reopen" | "spam") {
     if (!this.#active || !this.#session) return;
@@ -614,7 +841,7 @@ export class SupportDashboardController {
       const canNote = this.#has("internal_note.create");
       const composer =
         canReply || canNote
-          ? `<div class="sk-compose-wrap"><div class="sk-compose-actions">${canReply ? `<button class="sk-btn" data-action="reply" aria-pressed="${String(this.#mode === "reply")}">${this.#options.strings.reply}</button>` : ""}${canNote ? `<button class="sk-btn sk-btn-note" data-action="note" aria-pressed="${String(this.#mode === "note")}">${this.#options.strings.internalNote}</button>` : ""}<button class="sk-btn sk-btn-primary sk-send" data-action="send">${this.#options.strings.send}</button></div><label class="sk-visually-hidden" for="sk-composer">${this.#mode === "note" ? this.#options.strings.internalNote : this.#options.strings.reply}</label><textarea id="sk-composer" class="sk-compose" maxlength="50000"></textarea></div>`
+          ? `<div class="sk-compose-wrap"><div class="sk-compose-actions">${canReply ? `<button class="sk-btn" data-action="reply" aria-pressed="${String(this.#mode === "reply")}">${this.#options.strings.reply}</button>` : ""}${canNote ? `<button class="sk-btn sk-btn-note" data-action="note" aria-pressed="${String(this.#mode === "note")}">${this.#options.strings.internalNote}</button>` : ""}${this.#attachmentConfig ? `<input class="sk-file-input" type="file" multiple><button class="sk-btn" data-action="attach" aria-label="Attach files">Attach</button>` : ""}<button class="sk-btn sk-btn-primary sk-send" data-action="send">${this.#options.strings.send}</button></div><div class="sk-files sk-upload-queue" role="status" aria-label="Selected attachments"></div><label class="sk-visually-hidden" for="sk-composer">${this.#mode === "note" ? this.#options.strings.internalNote : this.#options.strings.reply}</label><textarea id="sk-composer" class="sk-compose" maxlength="50000"></textarea></div>`
           : `<div class="sk-live" role="status">Read-only access</div>`;
       center.innerHTML = `<header class="sk-head"><button class="sk-btn sk-back" data-action="back">${this.#options.strings.back}</button><h2></h2><div class="sk-controls"></div></header><div class="sk-live" role="status">${liveStatus}</div><div class="sk-timeline" aria-label="Conversation messages"></div>${composer}`;
       text(
@@ -655,6 +882,27 @@ export class SupportDashboardController {
         const body = document.createElement("div");
         body.textContent = message.body;
         article.append(body);
+        if (message.attachments?.length) {
+          const files = document.createElement("div");
+          files.className = "sk-files";
+          for (const attachment of message.attachments) {
+            const card = document.createElement("div");
+            card.className = `sk-file ${message.type === "internal_note" ? "sk-file-note" : ""}`;
+            const name = document.createElement("span");
+            name.textContent = attachment.fileName;
+            const download = document.createElement("button");
+            download.className = "sk-btn";
+            download.dataset.download = attachment.id;
+            download.textContent = "Download";
+            download.setAttribute(
+              "aria-label",
+              `Download ${attachment.fileName}`,
+            );
+            card.append(name, download);
+            files.append(card);
+          }
+          article.append(files);
+        }
         if (message.deliveryStatus === "failed") {
           const failed = document.createElement("span");
           failed.className = "sk-meta";
@@ -674,6 +922,45 @@ export class SupportDashboardController {
       if (textarea)
         textarea.value =
           this.#drafts.get(`${this.#active}:${this.#mode}`) ?? "";
+      const queue = center.querySelector(".sk-upload-queue");
+      const uploadKey = `${this.#active}:${this.#mode}`;
+      for (const upload of this.#uploads.get(uploadKey) ?? []) {
+        const card = document.createElement("div");
+        card.className = `sk-file ${this.#mode === "note" ? "sk-file-note" : ""}`;
+        const name = document.createElement("span");
+        name.textContent = `${upload.file.name} (${Math.ceil(upload.file.size / 1024)} KB)`;
+        card.append(name);
+        if (upload.status === "uploading") {
+          const progress = document.createElement("progress");
+          progress.max = 100;
+          progress.value = upload.progress;
+          progress.setAttribute(
+            "aria-label",
+            `Uploading ${upload.file.name}: ${upload.progress}%`,
+          );
+          card.append(progress);
+        } else if (upload.status === "failed") {
+          const error = document.createElement("span");
+          error.setAttribute("role", "alert");
+          error.textContent = upload.error ?? "Upload failed.";
+          const retry = document.createElement("button");
+          retry.className = "sk-btn";
+          retry.dataset.retryUpload = upload.localId;
+          retry.textContent = "Retry";
+          card.append(error, retry);
+        } else {
+          const ready = document.createElement("span");
+          ready.textContent = "Ready";
+          card.append(ready);
+        }
+        const remove = document.createElement("button");
+        remove.className = "sk-btn";
+        remove.dataset.removeUpload = upload.localId;
+        remove.textContent = "Remove";
+        remove.setAttribute("aria-label", `Remove ${upload.file.name}`);
+        card.append(remove);
+        queue?.append(card);
+      }
     }
     const context = this.#root.querySelector(".sk-context")!;
     context.innerHTML = `<header class="sk-head"><h2>${this.#options.strings.customerDetails}</h2></header><div class="sk-detail"><dl><dt>Participant details</dt><dd>Unavailable from the current public server contract</dd><dt>Conversation status</dt><dd>${active?.status.replaceAll("_", " ") ?? "—"}</dd><dt>Created</dt><dd>${active ? new Date(active.createdAt).toLocaleString() : "—"}</dd></dl></div>`;
@@ -692,6 +979,42 @@ export class SupportDashboardController {
         ?.focus();
   }
   #bind() {
+    this.#root
+      .querySelectorAll<HTMLElement>("[data-download]")
+      .forEach((element) =>
+        element.addEventListener("click", () => {
+          if (element.dataset.download)
+            void this.#download(element.dataset.download);
+        }),
+      );
+    this.#root
+      .querySelectorAll<HTMLElement>("[data-remove-upload]")
+      .forEach((element) =>
+        element.addEventListener("click", () => {
+          if (element.dataset.removeUpload)
+            void this.#removeUpload(element.dataset.removeUpload);
+        }),
+      );
+    this.#root
+      .querySelectorAll<HTMLElement>("[data-retry-upload]")
+      .forEach((element) =>
+        element.addEventListener("click", () => {
+          if (element.dataset.retryUpload)
+            void this.#retryUpload(element.dataset.retryUpload);
+        }),
+      );
+    this.#root
+      .querySelector('[data-action="attach"]')
+      ?.addEventListener("click", () =>
+        this.#root.querySelector<HTMLInputElement>(".sk-file-input")?.click(),
+      );
+    this.#root
+      .querySelector<HTMLInputElement>(".sk-file-input")
+      ?.addEventListener("change", (event) => {
+        const input = event.target as HTMLInputElement;
+        this.#selectFiles(input.files);
+        input.value = "";
+      });
     this.#root
       .querySelectorAll<HTMLElement>("[data-retry]")
       .forEach((element) => {

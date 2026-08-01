@@ -21,6 +21,8 @@ export type {
   SupportNotificationAdapter,
   SupportRealtimeAdapter,
   SupportStorageAdapter,
+  AttachmentScannerAdapter,
+  AttachmentConfig,
   VisitorIdentity,
   WidgetConfig,
 } from "@crazyglegit/support-contracts";
@@ -51,6 +53,10 @@ export type {
   SupportKitHealth,
   SupportMessageOperations,
   SupportTagOperations,
+  AttachmentOperationInput,
+  CreateAttachmentUploadIntentOperationInput,
+  SanitizedAttachment,
+  SupportAttachmentOperations,
   UpsertAgentOperationInput,
   UpsertCustomerOperationInput,
 } from "./types.js";

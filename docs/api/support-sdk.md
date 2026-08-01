@@ -19,3 +19,7 @@ instances. The returned unsubscribe function is idempotent in effect, and SDK
 disposal clears all listeners. Verified agent actors include their persisted role
 and exact permissions; these values come from the host authentication boundary,
 not a transport payload.
+
+When securely configured, `support.attachments` exposes upload-intent,
+completion, pending-delete, and authorized-download operations. Project scope is
+still implicit and provider storage details never cross the SDK boundary.
