@@ -131,6 +131,53 @@ export interface SupportAIDraftResult {
 /** Narrow boundary for optional agent-controlled AI drafting. */
 export interface SupportAIAdapter extends SupportAdapterLifecycle {
   generateDraft(input: SupportAIDraftInput): Promise<SupportAIDraftResult>;
+  generateChatbotAnswer?(
+    input: ChatbotGenerationInput,
+  ): Promise<ChatbotGenerationResult>;
+  generateHandoffSummary?(
+    input: ChatbotHandoffSummaryInput,
+  ): Promise<ChatbotHandoffSummaryResult>;
+}
+
+export interface RetrievedKnowledgeContext {
+  readonly sourceKey: string;
+  readonly title: string;
+  readonly section?: string;
+  readonly content: string;
+}
+export interface ChatbotGenerationInput {
+  readonly systemPolicy: string;
+  readonly message: string;
+  readonly conversation: readonly {
+    readonly actorType: "customer" | "visitor" | "bot";
+    readonly content: string;
+  }[];
+  readonly knowledge: readonly RetrievedKnowledgeContext[];
+  readonly allowedCitationSourceKeys: readonly string[];
+  readonly maximumOutputCharacters: number;
+}
+export interface ChatbotGenerationResult {
+  readonly answer: string;
+  readonly citedSourceKeys: readonly string[];
+  readonly shouldEscalate: boolean;
+  readonly escalationReason?: string;
+  readonly modelReference?: string;
+}
+export interface ChatbotHandoffSummaryInput {
+  readonly transcript: readonly {
+    readonly actorType: "customer" | "visitor" | "bot";
+    readonly content: string;
+  }[];
+  readonly citedSourceKeys: readonly string[];
+  readonly maximumOutputCharacters: number;
+}
+export interface ChatbotHandoffSummaryResult {
+  readonly summary: string;
+  readonly unresolvedQuestions: readonly string[];
+}
+export interface EmbeddingAdapter extends SupportAdapterLifecycle {
+  readonly dimensions: number;
+  embed(input: readonly string[]): Promise<readonly (readonly number[])[]>;
 }
 
 export type { SupportDatabaseAdapter };

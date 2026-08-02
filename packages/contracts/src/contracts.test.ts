@@ -292,7 +292,7 @@ describe("enum schemas", () => {
   );
 
   it("declares every required API error code", () => {
-    expect(API_ERROR_CODES).toHaveLength(21);
+    expect(API_ERROR_CODES).toHaveLength(35);
     for (const code of API_ERROR_CODES) {
       expect(
         apiErrorEnvelopeSchema.safeParse({

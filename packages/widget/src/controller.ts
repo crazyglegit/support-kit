@@ -3,9 +3,13 @@ import {
   customerConversationSchema,
   customerMessageSchema,
   publicWidgetConfigurationSchema,
+  chatbotSessionSchema,
+  chatbotTurnSchema,
   widgetSocketEventEnvelopeSchema,
   type CustomerConversation,
   type CustomerMessage,
+  type PublicChatbotSession,
+  type PublicChatbotTurn,
 } from "@crazyglegit/support-contracts/widget";
 import { io, type Socket } from "socket.io-client";
 import { z } from "zod";
@@ -19,7 +23,7 @@ import type {
   SupportWidgetOptions,
 } from "./types.js";
 
-type View = "home" | "list" | "new" | "conversation";
+type View = "home" | "list" | "new" | "conversation" | "chatbot";
 type Connection =
   "connecting" | "connected" | "reconnecting" | "offline" | "http-only";
 interface PendingMessage {
@@ -53,6 +57,10 @@ interface State {
   agentTyping: boolean;
   newMessages: boolean;
   uploads: PendingUpload[];
+  chatbotAvailable: boolean;
+  chatbotSession: PublicChatbotSession | undefined;
+  chatbotTurns: PublicChatbotTurn[];
+  chatbotSending: boolean;
 }
 
 const sessionSchema = z.strictObject({
@@ -160,6 +168,10 @@ export class SupportWidgetController {
     agentTyping: false,
     newMessages: false,
     uploads: [],
+    chatbotAvailable: false,
+    chatbotSession: undefined,
+    chatbotTurns: [],
+    chatbotSending: false,
   };
   #socket: Socket | undefined;
   #destroyed = false;
@@ -173,6 +185,7 @@ export class SupportWidgetController {
   #accentColor: string;
   #colorScheme: MediaQueryList | undefined;
   #typingActive = false;
+  #chatbotRetryId: string | undefined;
   #attachmentConfig:
     | {
         maxFileSizeBytes: number;
@@ -352,6 +365,8 @@ export class SupportWidgetController {
         );
       } else if (a === "conversation" && el.dataset.id)
         void this.#activate(el.dataset.id);
+      else if (a === "chatbot") void this.#openChatbot();
+      else if (a === "handoff") void this.#handoff();
       else if (a === "send") void this.#send();
       else if (a === "retry" && el.dataset.id) void this.#retry(el.dataset.id);
       else if (a === "new-messages") this.#scrollBottom();
@@ -447,6 +462,7 @@ export class SupportWidgetController {
       this.#attachmentConfig = server.features.attachments
         ? server.attachments
         : undefined;
+      this.#state.chatbotAvailable = server.features.chatbot;
       this.#state.conversations = conversations;
       this.#state.initialized = true;
       this.#state.loading = false;
@@ -659,6 +675,10 @@ export class SupportWidgetController {
     );
   }
   async #send(): Promise<void> {
+    if (this.#state.view === "chatbot") {
+      await this.#sendChatbot();
+      return;
+    }
     const body = this.#state.draft.trim();
     const attachmentIds = this.#state.uploads.flatMap((upload) =>
       upload.status === "ready" && upload.attachmentId
@@ -713,6 +733,96 @@ export class SupportWidgetController {
       this.#creation = undefined;
       this.#render();
       queueMicrotask(() => this.#scrollBottom());
+    }
+  }
+  async #openChatbot(): Promise<void> {
+    if (!this.#state.chatbotAvailable) return;
+    this.#leaveActive();
+    this.#state.view = "chatbot";
+    this.#state.loading = true;
+    this.#render();
+    try {
+      if (!this.#state.chatbotSession)
+        this.#state.chatbotSession = await this.#http.request(
+          "/chatbot/sessions",
+          chatbotSessionSchema,
+          { method: "POST", body: "{}" },
+        );
+      this.#state.chatbotTurns = await this.#http.request(
+        `/chatbot/sessions/${encodeURIComponent(this.#state.chatbotSession.id)}/messages`,
+        z.array(chatbotTurnSchema),
+      );
+    } catch (error) {
+      this.#fail(error);
+    } finally {
+      this.#state.loading = false;
+      this.#render();
+      queueMicrotask(() => this.#scrollBottom());
+    }
+  }
+  async #sendChatbot(): Promise<void> {
+    const session = this.#state.chatbotSession;
+    const message = this.#state.draft.trim();
+    if (
+      !session ||
+      !message ||
+      this.#state.chatbotSending ||
+      message.length > this.#options.maxMessageLength
+    )
+      return;
+    this.#state.chatbotSending = true;
+    const clientMessageId = this.#chatbotRetryId ?? crypto.randomUUID();
+    this.#chatbotRetryId = clientMessageId;
+    this.#state.draft = "";
+    this.#render();
+    try {
+      const result = await this.#http.request(
+        `/chatbot/sessions/${encodeURIComponent(session.id)}/messages`,
+        z.strictObject({
+          userTurn: chatbotTurnSchema,
+          botTurn: chatbotTurnSchema,
+        }),
+        { method: "POST", body: JSON.stringify({ message, clientMessageId }) },
+      );
+      const turns = new Map(
+        this.#state.chatbotTurns.map((turn) => [turn.id, turn]),
+      );
+      turns.set(result.userTurn.id, result.userTurn);
+      turns.set(result.botTurn.id, result.botTurn);
+      this.#state.chatbotTurns = [...turns.values()].sort(
+        (a, b) =>
+          a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+      );
+      this.#chatbotRetryId = undefined;
+    } catch (error) {
+      this.#state.draft = message;
+      this.#fail(error);
+    } finally {
+      this.#state.chatbotSending = false;
+      this.#render();
+      queueMicrotask(() => this.#scrollBottom());
+    }
+  }
+  async #handoff(): Promise<void> {
+    const session = this.#state.chatbotSession;
+    if (!session) return;
+    try {
+      const result = await this.#http.request(
+        `/chatbot/sessions/${encodeURIComponent(session.id)}/handoff`,
+        z.strictObject({
+          conversationId: z.string().min(1),
+          requestedAt: z.iso.datetime({ offset: true }),
+        }),
+        {
+          method: "POST",
+          body: JSON.stringify({ reason: "Customer requested human support." }),
+        },
+      );
+      await this.#refreshConversations();
+      await this.#activate(result.conversationId);
+    } catch (error) {
+      this.#fail(error);
+      this.#render();
     }
   }
   async #createConversation(body: string, id: string): Promise<void> {
@@ -1014,7 +1124,7 @@ export class SupportWidgetController {
     if (s.error && !s.initialized)
       return `<div class="content empty"><p>${escape(s.error)}</p><button class="primary" data-action="close">${escape(o.strings.close)}</button></div>`;
     if (s.view === "home")
-      return `<div class="content home"><h2>${escape(this.#greeting)}</h2><p class="muted">Send us a message and continue any previous conversation.</p><button class="primary" data-action="new">${escape(o.strings.newConversation)}</button><button class="primary secondary" data-action="list">${escape(o.strings.conversations)} (${s.conversations.length})</button></div>`;
+      return `<div class="content home"><h2>${escape(this.#greeting)}</h2><p class="muted">Send us a message and continue any previous conversation.</p>${s.chatbotAvailable ? `<button class="primary" data-action="chatbot">Ask the support assistant</button>` : ""}<button class="primary ${s.chatbotAvailable ? "secondary" : ""}" data-action="new">${escape(o.strings.newConversation)}</button><button class="primary secondary" data-action="list">${escape(o.strings.conversations)} (${s.conversations.length})</button></div>`;
     if (s.view === "list")
       return `<div class="content"><h2>${escape(o.strings.conversations)}</h2>${s.conversations.length ? `<div class="rows">${s.conversations.map((c) => `<button class="row" data-action="conversation" data-id="${escape(c.id)}"><strong>${escape(c.subject ?? "Support conversation")}</strong><span>${escape(c.status.replaceAll("_", " "))}</span><small>${escape(formatDate(c.updatedAt))}</small></button>`).join("")}</div>` : `<div class="empty"><p>${escape(o.strings.noConversations)}</p><button class="primary" data-action="new">${escape(o.strings.newConversation)}</button></div>`}</div>`;
     if (s.view === "new") {
@@ -1026,6 +1136,8 @@ export class SupportWidgetController {
         : "";
       return `<div class="content home"><h2>${escape(o.strings.newConversation)}</h2><p class="muted">Tell us what you need help with.</p>${submissionState}${this.#composer()}</div>`;
     }
+    if (s.view === "chatbot")
+      return `${s.loading ? `<div class="content empty" role="status">${escape(o.strings.loading)}</div>` : `<div class="content messages" role="log" aria-live="polite">${s.chatbotTurns.length ? s.chatbotTurns.map((turn) => `<div class="bubble ${turn.actorType === "bot" ? "" : "mine"}">${escape(turn.content)}${turn.citations.length ? `<div class="muted"><small>Sources: ${turn.citations.map((citation) => escape(citation.articleTitle)).join(", ")}</small></div>` : ""}<small>${escape(formatDate(turn.createdAt))}</small></div>`).join("") : `<div class="empty">Ask a question about our published support information.</div>`}</div>`}<button class="primary secondary" data-action="handoff" ${s.chatbotSending ? "disabled" : ""}>Talk to a human</button>${this.#composer()}`;
     const active = s.conversations.find((c) => c.id === s.activeId);
     const terminal =
       active?.status === "resolved" ||

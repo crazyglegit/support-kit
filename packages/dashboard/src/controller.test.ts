@@ -62,6 +62,11 @@ describe("dashboard controller", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     socketHandlers.clear();
+    document.body.replaceChildren();
+    Object.defineProperty(globalThis, "innerWidth", {
+      configurable: true,
+      value: 1024,
+    });
     media();
   });
   it("reconciles durable and optimistic messages by id and clientMessageId", () => {
@@ -109,6 +114,61 @@ describe("dashboard controller", () => {
       "https://support.example.com",
       expect.objectContaining({ auth: { actorType: "agent" } }),
     );
+    controller.destroy();
+  });
+  it("keeps conversation activation stable when realtime connects", async () => {
+    Object.defineProperty(globalThis, "innerWidth", {
+      configurable: true,
+      value: 390,
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string | URL | Request) => {
+        const url = String(input);
+        if (url.endsWith("/agent/session"))
+          return response({
+            actor: {
+              type: "agent",
+              id: "agent-1",
+              role: "support_agent",
+              permissions: ["conversation.read", "conversation.reply"],
+            },
+          });
+        if (url.endsWith("/agent/conversations/conversation-1"))
+          return response({ conversation, messages: [message] });
+        if (url.endsWith("/agent/conversations"))
+          return response([conversation]);
+        return response({ features: { attachments: false, chatbot: false } });
+      }),
+    );
+    const target = document.createElement("div");
+    document.body.append(target);
+    const controller = new SupportDashboardController({
+      target,
+      socketUrl: "https://support.example.com",
+    });
+    await controller.initialize();
+    const conversationButton = target.querySelector<HTMLButtonElement>(
+      '[data-conversation="conversation-1"]',
+    );
+    expect(conversationButton).not.toBeNull();
+    conversationButton?.focus();
+    socketHandlers.get("connect_error")?.();
+    socketHandlers.get("connect")?.();
+    expect(conversationButton?.isConnected).toBe(true);
+    document.body.dispatchEvent(
+      new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }),
+    );
+    await vi.waitFor(() => {
+      expect(
+        target.querySelector(".sk-dashboard")?.getAttribute("data-mobile-view"),
+      ).toBe("conversation");
+      const back = target.querySelector<HTMLButtonElement>(
+        '[data-action="back"]',
+      );
+      expect(back).not.toBeNull();
+      expect(document.activeElement).toBe(back);
+    });
     controller.destroy();
   });
   it("shows authorized notes distinctly and keeps hostile content inert", async () => {

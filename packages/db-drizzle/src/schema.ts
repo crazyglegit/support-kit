@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   bigint,
+  integer,
   check,
   foreignKey,
   index,
@@ -12,6 +13,7 @@ import {
   unique,
   uniqueIndex,
   uuid,
+  varchar,
 } from "drizzle-orm/pg-core";
 
 export const conversationStatusEnum = pgEnum("support_conversation_status", [
@@ -63,6 +65,25 @@ export const attachmentScanStatusEnum = pgEnum(
   "support_attachment_scan_status",
   ["pending", "clean", "infected", "suspicious", "failed", "skipped"],
 );
+export const knowledgeStatusEnum = pgEnum("support_knowledge_status", [
+  "draft",
+  "published",
+  "archived",
+]);
+export const chatbotSessionStatusEnum = pgEnum(
+  "support_chatbot_session_status",
+  ["active", "handed_off"],
+);
+export const chatbotActorTypeEnum = pgEnum("support_chatbot_actor_type", [
+  "customer",
+  "visitor",
+  "bot",
+]);
+export const chatbotOutcomeEnum = pgEnum("support_chatbot_outcome", [
+  "answered",
+  "insufficient_knowledge",
+  "ai_failed",
+]);
 
 const timestamps = {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
@@ -212,6 +233,210 @@ export const conversations = pgTable(
       t.projectId,
       t.status,
       t.updatedAt,
+    ),
+  ],
+);
+
+export const knowledgeArticles = pgTable(
+  "support_knowledge_articles",
+  {
+    id: uuid("id").primaryKey(),
+    projectId: projectId(),
+    title: text("title").notNull(),
+    sourceKey: text("source_key").notNull(),
+    summary: text("summary").notNull(),
+    body: text("body").notNull(),
+    status: knowledgeStatusEnum("status").notNull(),
+    revisionNumber: integer("revision_number").notNull().default(0),
+    activeRevisionNumber: integer("active_revision_number"),
+    tags: jsonb("tags").$type<readonly string[]>().notNull().default([]),
+    createdByAgentId: uuid("created_by_agent_id").notNull(),
+    updatedByAgentId: uuid("updated_by_agent_id").notNull(),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (t) => [
+    unique("support_knowledge_articles_project_id_unique").on(
+      t.projectId,
+      t.id,
+    ),
+    uniqueIndex("support_knowledge_articles_project_source_uidx").on(
+      t.projectId,
+      t.sourceKey,
+    ),
+    index("support_knowledge_articles_project_status_idx").on(
+      t.projectId,
+      t.status,
+      t.updatedAt,
+    ),
+  ],
+);
+
+export const knowledgeRevisions = pgTable(
+  "support_knowledge_revisions",
+  {
+    id: uuid("id").primaryKey(),
+    projectId: projectId(),
+    articleId: uuid("article_id").notNull(),
+    revisionNumber: integer("revision_number").notNull(),
+    title: text("title").notNull(),
+    summary: text("summary").notNull(),
+    body: text("body").notNull(),
+    createdByAgentId: uuid("created_by_agent_id").notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    foreignKey({
+      name: "support_knowledge_revisions_project_article_fk",
+      columns: [t.projectId, t.articleId],
+      foreignColumns: [knowledgeArticles.projectId, knowledgeArticles.id],
+    }).onDelete("cascade"),
+    uniqueIndex("support_knowledge_revisions_project_article_revision_uidx").on(
+      t.projectId,
+      t.articleId,
+      t.revisionNumber,
+    ),
+  ],
+);
+
+export const knowledgeChunks = pgTable(
+  "support_knowledge_chunks",
+  {
+    id: uuid("id").primaryKey(),
+    projectId: projectId(),
+    articleId: uuid("article_id").notNull(),
+    revisionNumber: integer("revision_number").notNull(),
+    chunkIndex: integer("chunk_index").notNull(),
+    sourceKey: text("source_key").notNull(),
+    title: text("title").notNull(),
+    section: text("section"),
+    content: text("content").notNull(),
+    characterCount: integer("character_count").notNull(),
+    checksum: text("checksum").notNull(),
+    searchText: text("search_text").notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    foreignKey({
+      name: "support_knowledge_chunks_project_article_fk",
+      columns: [t.projectId, t.articleId],
+      foreignColumns: [knowledgeArticles.projectId, knowledgeArticles.id],
+    }).onDelete("cascade"),
+    uniqueIndex(
+      "support_knowledge_chunks_project_article_revision_index_uidx",
+    ).on(t.projectId, t.articleId, t.revisionNumber, t.chunkIndex),
+    index("support_knowledge_chunks_project_revision_idx").on(
+      t.projectId,
+      t.articleId,
+      t.revisionNumber,
+    ),
+  ],
+);
+
+export const chatbotSessions = pgTable(
+  "support_chatbot_sessions",
+  {
+    id: uuid("id").primaryKey(),
+    projectId: projectId(),
+    actorType: participantTypeEnum("actor_type").notNull(),
+    actorId: uuid("actor_id").notNull(),
+    status: chatbotSessionStatusEnum("status").notNull(),
+    conversationId: uuid("conversation_id"),
+    turnCount: integer("turn_count").notNull().default(0),
+    handedOffAt: timestamp("handed_off_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (t) => [
+    check(
+      "support_chatbot_sessions_customer_actor_check",
+      sql`${t.actorType} in ('customer', 'visitor')`,
+    ),
+    unique("support_chatbot_sessions_project_id_unique").on(t.projectId, t.id),
+    index("support_chatbot_sessions_project_actor_idx").on(
+      t.projectId,
+      t.actorType,
+      t.actorId,
+      t.updatedAt,
+    ),
+  ],
+);
+
+export const chatbotTurns = pgTable(
+  "support_chatbot_turns",
+  {
+    id: uuid("id").primaryKey(),
+    projectId: projectId(),
+    sessionId: uuid("session_id").notNull(),
+    actorType: chatbotActorTypeEnum("actor_type").notNull(),
+    clientMessageId: varchar("client_message_id", { length: 200 }),
+    content: text("content").notNull(),
+    citations: jsonb("citations")
+      .$type<
+        readonly {
+          sourceKey: string;
+          articleTitle: string;
+          section?: string;
+          excerpt?: string;
+          publicUrl?: string;
+        }[]
+      >()
+      .notNull()
+      .default([]),
+    outcome: chatbotOutcomeEnum("outcome").notNull(),
+    modelReference: text("model_reference"),
+    ...timestamps,
+  },
+  (t) => [
+    foreignKey({
+      name: "support_chatbot_turns_project_session_fk",
+      columns: [t.projectId, t.sessionId],
+      foreignColumns: [chatbotSessions.projectId, chatbotSessions.id],
+    }).onDelete("cascade"),
+    index("support_chatbot_turns_project_session_created_idx").on(
+      t.projectId,
+      t.sessionId,
+      t.createdAt,
+    ),
+    uniqueIndex("support_chatbot_turns_customer_idempotency_idx")
+      .on(t.projectId, t.sessionId, t.clientMessageId)
+      .where(sql`${t.clientMessageId} is not null`),
+  ],
+);
+
+export const chatbotHandoffs = pgTable(
+  "support_chatbot_handoffs",
+  {
+    id: uuid("id").primaryKey(),
+    projectId: projectId(),
+    sessionId: uuid("session_id").notNull(),
+    conversationId: uuid("conversation_id").notNull(),
+    reason: text("reason").notNull(),
+    summary: text("summary").notNull(),
+    unresolvedQuestions: jsonb("unresolved_questions")
+      .$type<readonly string[]>()
+      .notNull()
+      .default([]),
+    citedSourceKeys: jsonb("cited_source_keys")
+      .$type<readonly string[]>()
+      .notNull()
+      .default([]),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    foreignKey({
+      name: "support_chatbot_handoffs_project_session_fk",
+      columns: [t.projectId, t.sessionId],
+      foreignColumns: [chatbotSessions.projectId, chatbotSessions.id],
+    }).onDelete("cascade"),
+    uniqueIndex("support_chatbot_handoffs_project_session_uidx").on(
+      t.projectId,
+      t.sessionId,
+    ),
+    index("support_chatbot_handoffs_project_conversation_idx").on(
+      t.projectId,
+      t.conversationId,
     ),
   ],
 );

@@ -25,5 +25,8 @@
   },
   "publishConfig": {
     "access": "restricted"
+  },
+  "dependencies": {
+    "@crazyglegit/support-contracts": "workspace:*"
   }
 }

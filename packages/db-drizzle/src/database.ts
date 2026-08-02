@@ -1,6 +1,7 @@
 import {
   and,
   desc,
+  asc,
   eq,
   getTableColumns,
   isNull,
@@ -26,6 +27,12 @@ import {
   type SavedReply,
   type SupportDatabaseAdapter,
   type Tag,
+  type KnowledgeArticle,
+  type KnowledgeArticleRevision,
+  type KnowledgeChunk,
+  type ChatbotSession,
+  type ChatbotTurn,
+  type ChatbotHandoff,
 } from "@crazyglegit/support-core";
 import * as schema from "./schema.js";
 
@@ -220,6 +227,126 @@ function mapSavedReply(
     title: row.title,
     body: row.body,
     createdByAgentId: row.createdByAgentId,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+function mapKnowledgeArticle(
+  row: typeof schema.knowledgeArticles.$inferSelect,
+): KnowledgeArticle {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    title: row.title,
+    sourceKey: row.sourceKey,
+    summary: row.summary,
+    body: row.body,
+    status: row.status,
+    revisionNumber: row.revisionNumber,
+    ...(row.activeRevisionNumber === null
+      ? {}
+      : { activeRevisionNumber: row.activeRevisionNumber }),
+    tags: row.tags,
+    createdByAgentId: row.createdByAgentId,
+    updatedByAgentId: row.updatedByAgentId,
+    ...(row.publishedAt === null ? {} : { publishedAt: row.publishedAt }),
+    ...(row.archivedAt === null ? {} : { archivedAt: row.archivedAt }),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+function mapKnowledgeRevision(
+  row: typeof schema.knowledgeRevisions.$inferSelect,
+): KnowledgeArticleRevision {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    articleId: row.articleId,
+    revisionNumber: row.revisionNumber,
+    title: row.title,
+    summary: row.summary,
+    body: row.body,
+    createdByAgentId: row.createdByAgentId,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+function mapKnowledgeChunk(
+  row: typeof schema.knowledgeChunks.$inferSelect,
+): KnowledgeChunk {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    articleId: row.articleId,
+    revisionNumber: row.revisionNumber,
+    chunkIndex: row.chunkIndex,
+    sourceKey: row.sourceKey,
+    title: row.title,
+    ...(row.section === null ? {} : { section: row.section }),
+    content: row.content,
+    characterCount: row.characterCount,
+    checksum: row.checksum,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+function mapChatbotSession(
+  row: typeof schema.chatbotSessions.$inferSelect,
+): ChatbotSession {
+  if (row.actorType === "agent")
+    throw new DomainError(
+      "VALIDATION_ERROR",
+      "Chatbot sessions cannot belong to agents.",
+    );
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    actorType: row.actorType,
+    actorId: row.actorId,
+    status: row.status,
+    ...(row.conversationId === null
+      ? {}
+      : { conversationId: row.conversationId }),
+    turnCount: row.turnCount,
+    ...(row.handedOffAt === null ? {} : { handedOffAt: row.handedOffAt }),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+function mapChatbotTurn(
+  row: typeof schema.chatbotTurns.$inferSelect,
+): ChatbotTurn {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    sessionId: row.sessionId,
+    actorType: row.actorType,
+    ...(row.clientMessageId === null
+      ? {}
+      : { clientMessageId: row.clientMessageId }),
+    content: row.content,
+    citations: row.citations,
+    outcome: row.outcome,
+    ...(row.modelReference === null
+      ? {}
+      : { modelReference: row.modelReference }),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+function mapChatbotHandoff(
+  row: typeof schema.chatbotHandoffs.$inferSelect,
+): ChatbotHandoff {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    sessionId: row.sessionId,
+    conversationId: row.conversationId,
+    reason: row.reason,
+    summary: row.summary,
+    unresolvedQuestions: row.unresolvedQuestions,
+    citedSourceKeys: row.citedSourceKeys,
+    requestedAt: row.requestedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -967,6 +1094,303 @@ function createAdapter(db: Database): SupportDatabaseAdapter {
       append: (event: AuditEvent) =>
         safe(async () => {
           await db.insert(schema.auditLogs).values(event);
+        }),
+    },
+    knowledge: {
+      findArticle: ({ projectId, id }) =>
+        safe(async () => {
+          const [row] = await db
+            .select()
+            .from(schema.knowledgeArticles)
+            .where(
+              and(
+                eq(schema.knowledgeArticles.projectId, projectId),
+                eq(schema.knowledgeArticles.id, id),
+              ),
+            )
+            .limit(1);
+          return row ? mapKnowledgeArticle(row) : null;
+        }),
+      findArticleBySourceKey: (projectId, sourceKey) =>
+        safe(async () => {
+          const [row] = await db
+            .select()
+            .from(schema.knowledgeArticles)
+            .where(
+              and(
+                eq(schema.knowledgeArticles.projectId, projectId),
+                eq(schema.knowledgeArticles.sourceKey, sourceKey),
+              ),
+            )
+            .limit(1);
+          return row ? mapKnowledgeArticle(row) : null;
+        }),
+      listArticles: (projectId, status) =>
+        safe(async () =>
+          (
+            await db
+              .select()
+              .from(schema.knowledgeArticles)
+              .where(
+                and(
+                  eq(schema.knowledgeArticles.projectId, projectId),
+                  ...(status
+                    ? [eq(schema.knowledgeArticles.status, status)]
+                    : []),
+                ),
+              )
+              .orderBy(desc(schema.knowledgeArticles.updatedAt))
+          ).map(mapKnowledgeArticle),
+        ),
+      saveArticle: (entity) =>
+        safe(async () => {
+          const [row] = await db
+            .insert(schema.knowledgeArticles)
+            .values({
+              ...entity,
+              activeRevisionNumber: entity.activeRevisionNumber ?? null,
+              publishedAt: entity.publishedAt ?? null,
+              archivedAt: entity.archivedAt ?? null,
+            })
+            .onConflictDoUpdate({
+              target: schema.knowledgeArticles.id,
+              set: {
+                title: entity.title,
+                summary: entity.summary,
+                body: entity.body,
+                status: entity.status,
+                revisionNumber: entity.revisionNumber,
+                activeRevisionNumber: entity.activeRevisionNumber ?? null,
+                tags: entity.tags,
+                updatedByAgentId: entity.updatedByAgentId,
+                publishedAt: entity.publishedAt ?? null,
+                archivedAt: entity.archivedAt ?? null,
+                updatedAt: entity.updatedAt,
+              },
+              setWhere: eq(
+                schema.knowledgeArticles.projectId,
+                entity.projectId,
+              ),
+            })
+            .returning();
+          if (!row) return missingResult();
+          return mapKnowledgeArticle(row);
+        }),
+      saveRevision: (entity) =>
+        safe(async () => {
+          const [row] = await db
+            .insert(schema.knowledgeRevisions)
+            .values(entity)
+            .returning();
+          if (!row) return missingResult();
+          return mapKnowledgeRevision(row);
+        }),
+      listRevisions: (projectId, articleId) =>
+        safe(async () =>
+          (
+            await db
+              .select()
+              .from(schema.knowledgeRevisions)
+              .where(
+                and(
+                  eq(schema.knowledgeRevisions.projectId, projectId),
+                  eq(schema.knowledgeRevisions.articleId, articleId),
+                ),
+              )
+              .orderBy(desc(schema.knowledgeRevisions.revisionNumber))
+          ).map(mapKnowledgeRevision),
+        ),
+      replaceChunks: (projectId, articleId, revisionNumber, chunks) =>
+        safe(async () => {
+          await db
+            .delete(schema.knowledgeChunks)
+            .where(
+              and(
+                eq(schema.knowledgeChunks.projectId, projectId),
+                eq(schema.knowledgeChunks.articleId, articleId),
+                eq(schema.knowledgeChunks.revisionNumber, revisionNumber),
+              ),
+            );
+          if (chunks.length)
+            await db.insert(schema.knowledgeChunks).values(
+              chunks.map((chunk) => ({
+                ...chunk,
+                section: chunk.section ?? null,
+                searchText: `${chunk.title} ${chunk.content}`,
+              })),
+            );
+        }),
+      searchPublished: (projectId, query, limit) =>
+        safe(async () =>
+          (
+            await db
+              .select({ chunk: schema.knowledgeChunks })
+              .from(schema.knowledgeChunks)
+              .innerJoin(
+                schema.knowledgeArticles,
+                and(
+                  eq(
+                    schema.knowledgeArticles.projectId,
+                    schema.knowledgeChunks.projectId,
+                  ),
+                  eq(
+                    schema.knowledgeArticles.id,
+                    schema.knowledgeChunks.articleId,
+                  ),
+                  eq(
+                    schema.knowledgeArticles.activeRevisionNumber,
+                    schema.knowledgeChunks.revisionNumber,
+                  ),
+                ),
+              )
+              .where(
+                and(
+                  eq(schema.knowledgeChunks.projectId, projectId),
+                  eq(schema.knowledgeArticles.status, "published"),
+                  sql`to_tsvector('simple', ${schema.knowledgeChunks.searchText}) @@ plainto_tsquery('simple', ${query})`,
+                ),
+              )
+              .orderBy(
+                desc(
+                  sql`ts_rank(to_tsvector('simple', ${schema.knowledgeChunks.searchText}), plainto_tsquery('simple', ${query}))`,
+                ),
+                asc(schema.knowledgeChunks.chunkIndex),
+              )
+              .limit(limit)
+          ).map(({ chunk }) => mapKnowledgeChunk(chunk)),
+        ),
+    },
+    chatbot: {
+      findSession: ({ projectId, id }) =>
+        safe(async () => {
+          const [row] = await db
+            .select()
+            .from(schema.chatbotSessions)
+            .where(
+              and(
+                eq(schema.chatbotSessions.projectId, projectId),
+                eq(schema.chatbotSessions.id, id),
+              ),
+            )
+            .limit(1);
+          return row ? mapChatbotSession(row) : null;
+        }),
+      saveSession: (entity) =>
+        safe(async () => {
+          const [row] = await db
+            .insert(schema.chatbotSessions)
+            .values({
+              ...entity,
+              conversationId: entity.conversationId ?? null,
+              handedOffAt: entity.handedOffAt ?? null,
+            })
+            .onConflictDoUpdate({
+              target: schema.chatbotSessions.id,
+              set: {
+                status: entity.status,
+                conversationId: entity.conversationId ?? null,
+                turnCount: entity.turnCount,
+                handedOffAt: entity.handedOffAt ?? null,
+                updatedAt: entity.updatedAt,
+              },
+              setWhere: eq(schema.chatbotSessions.projectId, entity.projectId),
+            })
+            .returning();
+          if (!row) return missingResult();
+          return mapChatbotSession(row);
+        }),
+      listTurns: (projectId, sessionId) =>
+        safe(async () =>
+          (
+            await db
+              .select()
+              .from(schema.chatbotTurns)
+              .where(
+                and(
+                  eq(schema.chatbotTurns.projectId, projectId),
+                  eq(schema.chatbotTurns.sessionId, sessionId),
+                ),
+              )
+              .orderBy(
+                asc(schema.chatbotTurns.createdAt),
+                asc(schema.chatbotTurns.id),
+              )
+          ).map(mapChatbotTurn),
+        ),
+      findTurnByClientMessageId: (projectId, sessionId, clientMessageId) =>
+        safe(async () => {
+          const [row] = await db
+            .select()
+            .from(schema.chatbotTurns)
+            .where(
+              and(
+                eq(schema.chatbotTurns.projectId, projectId),
+                eq(schema.chatbotTurns.sessionId, sessionId),
+                eq(schema.chatbotTurns.clientMessageId, clientMessageId),
+              ),
+            )
+            .limit(1);
+          return row ? mapChatbotTurn(row) : null;
+        }),
+      saveTurn: (entity) =>
+        safe(async () => {
+          const [row] = await db
+            .insert(schema.chatbotTurns)
+            .values({
+              ...entity,
+              clientMessageId: entity.clientMessageId ?? null,
+              modelReference: entity.modelReference ?? null,
+            })
+            .onConflictDoNothing()
+            .returning();
+          if (row) return mapChatbotTurn(row);
+          const [existing] = await db
+            .select()
+            .from(schema.chatbotTurns)
+            .where(
+              and(
+                eq(schema.chatbotTurns.projectId, entity.projectId),
+                eq(schema.chatbotTurns.id, entity.id),
+              ),
+            )
+            .limit(1);
+          if (!existing) return missingResult();
+          return mapChatbotTurn(existing);
+        }),
+      findHandoff: (projectId, sessionId) =>
+        safe(async () => {
+          const [row] = await db
+            .select()
+            .from(schema.chatbotHandoffs)
+            .where(
+              and(
+                eq(schema.chatbotHandoffs.projectId, projectId),
+                eq(schema.chatbotHandoffs.sessionId, sessionId),
+              ),
+            )
+            .limit(1);
+          return row ? mapChatbotHandoff(row) : null;
+        }),
+      saveHandoff: (entity) =>
+        safe(async () => {
+          const [row] = await db
+            .insert(schema.chatbotHandoffs)
+            .values(entity)
+            .onConflictDoNothing()
+            .returning();
+          if (row) return mapChatbotHandoff(row);
+          const [existing] = await db
+            .select()
+            .from(schema.chatbotHandoffs)
+            .where(
+              and(
+                eq(schema.chatbotHandoffs.projectId, entity.projectId),
+                eq(schema.chatbotHandoffs.sessionId, entity.sessionId),
+              ),
+            )
+            .limit(1);
+          if (!existing) return missingResult();
+          return mapChatbotHandoff(existing);
         }),
     },
     transaction: (operation) =>

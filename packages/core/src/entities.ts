@@ -146,6 +146,81 @@ export interface SavedReply extends ProjectScopedEntity {
   readonly createdByAgentId: string;
 }
 
+export type KnowledgeArticleStatus = "draft" | "published" | "archived";
+
+export interface KnowledgeArticle extends ProjectScopedEntity {
+  readonly title: string;
+  readonly sourceKey: string;
+  readonly summary: string;
+  readonly body: string;
+  readonly status: KnowledgeArticleStatus;
+  readonly revisionNumber: number;
+  readonly activeRevisionNumber?: number;
+  readonly tags: readonly string[];
+  readonly createdByAgentId: string;
+  readonly updatedByAgentId: string;
+  readonly publishedAt?: Date;
+  readonly archivedAt?: Date;
+}
+
+export interface KnowledgeArticleRevision extends ProjectScopedEntity {
+  readonly articleId: string;
+  readonly revisionNumber: number;
+  readonly title: string;
+  readonly summary: string;
+  readonly body: string;
+  readonly createdByAgentId: string;
+}
+
+export interface KnowledgeChunk extends ProjectScopedEntity {
+  readonly articleId: string;
+  readonly revisionNumber: number;
+  readonly chunkIndex: number;
+  readonly sourceKey: string;
+  readonly title: string;
+  readonly section?: string;
+  readonly content: string;
+  readonly characterCount: number;
+  readonly checksum: string;
+}
+
+export interface ChatbotSession extends ProjectScopedEntity {
+  readonly actorType: "customer" | "visitor";
+  readonly actorId: string;
+  readonly status: "active" | "handed_off";
+  readonly conversationId?: string;
+  readonly turnCount: number;
+  readonly handedOffAt?: Date;
+}
+
+export interface ChatbotCitation {
+  readonly sourceKey: string;
+  readonly articleTitle: string;
+  readonly section?: string;
+  readonly excerpt?: string;
+  readonly publicUrl?: string;
+}
+
+export interface ChatbotTurn extends ProjectScopedEntity {
+  readonly sessionId: string;
+  readonly actorType: "customer" | "visitor" | "bot";
+  readonly clientMessageId?: string;
+  readonly content: string;
+  readonly citations: readonly ChatbotCitation[];
+  readonly outcome: "answered" | "insufficient_knowledge" | "ai_failed";
+  readonly modelReference?: string;
+}
+
+export interface ChatbotHandoff extends ProjectScopedEntity {
+  readonly sessionId: string;
+  readonly conversationId: string;
+  readonly reason: string;
+  readonly summary: string;
+  readonly unresolvedQuestions: readonly string[];
+  readonly citedSourceKeys: readonly string[];
+  readonly requestedAt: Date;
+}
+
 /** An immutable record of a security- or business-relevant domain action. */
 export interface AuditEvent extends ProjectScopedEntity {
   readonly action: string;

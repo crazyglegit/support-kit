@@ -24,6 +24,22 @@ function kit(overrides?: Partial<SupportKit>): SupportKit {
     customers: { upsert: unused },
     agents: { upsert: unused },
     tags: { add: unused, remove: unused },
+    knowledge: {
+      create: unused,
+      update: unused,
+      publish: unused,
+      archive: unused,
+      restore: unused,
+      list: unused,
+      revisions: unused,
+    },
+    chatbot: {
+      start: unused,
+      get: unused,
+      turns: unused,
+      send: unused,
+      handoff: unused,
+    },
     attachments: {
       createUploadIntent: unused,
       completeUpload: unused,
@@ -50,6 +66,86 @@ function kit(overrides?: Partial<SupportKit>): SupportKit {
 }
 
 describe("createSupportServer", () => {
+  it("serializes agent knowledge without project or agent identifiers", async () => {
+    const timestamp = new Date("2026-08-02T00:00:00.000Z");
+    const support = kit({
+      auth: {
+        ...kit().auth,
+        resolveAgent: () =>
+          Promise.resolve({
+            type: "agent" as const,
+            id: "agent-secret",
+            role: "support_admin" as const,
+            permissions: ["knowledge.read" as const],
+          }),
+      },
+      knowledge: {
+        create: unused,
+        update: unused,
+        publish: unused,
+        archive: unused,
+        restore: unused,
+        revisions: unused,
+        list: () =>
+          Promise.resolve([
+            {
+              id: "article-1",
+              projectId: "project-secret",
+              title: "Refunds",
+              sourceKey: "refunds",
+              summary: "Refund policy",
+              body: "Refunds are available within 30 days.",
+              status: "published" as const,
+              revisionNumber: 1,
+              activeRevisionNumber: 1,
+              tags: [],
+              createdByAgentId: "agent-secret",
+              updatedByAgentId: "agent-secret",
+              publishedAt: timestamp,
+              createdAt: timestamp,
+              updatedAt: timestamp,
+            },
+          ]),
+      },
+    });
+    const { GET } = createSupportServer(support, {
+      allowedOrigins: ["https://app.test"],
+    });
+    const response = await GET(
+      new Request("https://app.test/api/support/agent/knowledge"),
+    );
+    const payload = JSON.stringify(await response.json());
+    expect(response.status).toBe(200);
+    expect(payload).toContain("Refunds");
+    expect(payload).not.toContain("project-secret");
+    expect(payload).not.toContain("agent-secret");
+  });
+
+  it("rejects browser-supplied chatbot identity and project scope", async () => {
+    const { POST } = createSupportServer(kit(), {
+      allowedOrigins: ["https://app.test"],
+    });
+    const response = await POST(
+      new Request(
+        "https://app.test/api/support/chatbot/sessions/session-1/messages",
+        {
+          method: "POST",
+          headers: {
+            origin: "https://app.test",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            message: "Help",
+            clientMessageId: "message-1",
+            projectId: "attacker",
+            actorId: "attacker",
+          }),
+        },
+      ),
+    );
+    expect(response.status).toBe(400);
+  });
+
   it("resolves an agent session only through verified server authentication", async () => {
     const { POST } = createSupportServer(kit(), {
       allowedOrigins: ["https://app.test"],

@@ -12,6 +12,12 @@ import type {
   Project,
   SavedReply,
   Tag,
+  KnowledgeArticle,
+  KnowledgeArticleRevision,
+  KnowledgeChunk,
+  ChatbotSession,
+  ChatbotTurn,
+  ChatbotHandoff,
 } from "./entities.js";
 
 /** Administrative project lookup boundary. Tenant repositories never accept project keys. */
@@ -154,6 +160,57 @@ export interface AuditRepository {
   append(event: AuditEvent): Promise<void>;
 }
 
+export interface KnowledgeRepository {
+  findArticle(key: ProjectEntityKey): Promise<KnowledgeArticle | null>;
+  findArticleBySourceKey(
+    projectId: string,
+    sourceKey: string,
+  ): Promise<KnowledgeArticle | null>;
+  listArticles(
+    projectId: string,
+    status?: KnowledgeArticle["status"],
+  ): Promise<readonly KnowledgeArticle[]>;
+  saveArticle(article: KnowledgeArticle): Promise<KnowledgeArticle>;
+  saveRevision(
+    revision: KnowledgeArticleRevision,
+  ): Promise<KnowledgeArticleRevision>;
+  listRevisions(
+    projectId: string,
+    articleId: string,
+  ): Promise<readonly KnowledgeArticleRevision[]>;
+  replaceChunks(
+    projectId: string,
+    articleId: string,
+    revisionNumber: number,
+    chunks: readonly KnowledgeChunk[],
+  ): Promise<void>;
+  searchPublished(
+    projectId: string,
+    query: string,
+    limit: number,
+  ): Promise<readonly KnowledgeChunk[]>;
+}
+
+export interface ChatbotRepository {
+  findSession(key: ProjectEntityKey): Promise<ChatbotSession | null>;
+  saveSession(session: ChatbotSession): Promise<ChatbotSession>;
+  listTurns(
+    projectId: string,
+    sessionId: string,
+  ): Promise<readonly ChatbotTurn[]>;
+  findTurnByClientMessageId(
+    projectId: string,
+    sessionId: string,
+    clientMessageId: string,
+  ): Promise<ChatbotTurn | null>;
+  saveTurn(turn: ChatbotTurn): Promise<ChatbotTurn>;
+  findHandoff(
+    projectId: string,
+    sessionId: string,
+  ): Promise<ChatbotHandoff | null>;
+  saveHandoff(handoff: ChatbotHandoff): Promise<ChatbotHandoff>;
+}
+
 /** Minimal provider-independent database boundary used by application services. */
 export interface SupportDatabaseAdapter {
   readonly projects: ProjectRepository;
@@ -170,6 +227,8 @@ export interface SupportDatabaseAdapter {
   readonly conversationTags: ConversationTagRepository;
   readonly savedReplies: SavedReplyRepository;
   readonly audit: AuditRepository;
+  readonly knowledge?: KnowledgeRepository;
+  readonly chatbot?: ChatbotRepository;
   transaction<TResult>(
     operation: (database: SupportDatabaseAdapter) => Promise<TResult>,
   ): Promise<TResult>;

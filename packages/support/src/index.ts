@@ -25,6 +25,8 @@ export type {
   AttachmentConfig,
   VisitorIdentity,
   WidgetConfig,
+  ChatbotConfig,
+  EmbeddingAdapter,
 } from "@crazyglegit/support-contracts";
 export type {
   AddInternalNoteOperationInput,
@@ -53,6 +55,13 @@ export type {
   SupportKitHealth,
   SupportMessageOperations,
   SupportTagOperations,
+  SupportKnowledgeOperations,
+  SupportChatbotOperations,
+  KnowledgeArticleCreateInput,
+  KnowledgeArticleUpdateInput,
+  KnowledgeArticleActionInput,
+  ChatbotSessionInput,
+  ChatbotSessionActionInput,
   AttachmentOperationInput,
   CreateAttachmentUploadIntentOperationInput,
   SanitizedAttachment,

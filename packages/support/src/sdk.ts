@@ -19,6 +19,17 @@ import {
   UpsertAgent,
   UpsertCustomer,
   UpsertVisitor,
+  ArchiveKnowledgeArticle,
+  CreateKnowledgeArticle,
+  GetChatbotSession,
+  ListChatbotTurns,
+  ListKnowledgeArticles,
+  PublishKnowledgeArticle,
+  RequestChatbotHandoff,
+  RestoreKnowledgeArticle,
+  SendChatbotMessage,
+  StartChatbotSession,
+  UpdateKnowledgeArticle,
   type ApplicationDependencies,
   type ApplicationEvent,
 } from "@crazyglegit/support-application";
@@ -47,6 +58,25 @@ import type {
 
 function randomId(): string {
   return globalThis.crypto.randomUUID();
+}
+
+async function within<TResult>(
+  operation: Promise<TResult>,
+  milliseconds: number,
+): Promise<TResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error("AI provider timeout."));
+        }, milliseconds);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 type EventListener = (event: SupportCommittedEvent) => void | Promise<void>;
@@ -157,6 +187,8 @@ class ComposedSupportKit implements SupportKit {
   public readonly customers: SupportKit["customers"];
   public readonly agents: SupportKit["agents"];
   public readonly tags: SupportKit["tags"];
+  public readonly knowledge: NonNullable<SupportKit["knowledge"]>;
+  public readonly chatbot: NonNullable<SupportKit["chatbot"]>;
   public readonly attachments: SupportKit["attachments"];
   public readonly auth: SupportKit["auth"];
   public readonly events: SupportKit["events"];
@@ -191,7 +223,70 @@ class ComposedSupportKit implements SupportKit {
       visitor: new UpsertVisitor(dependencies),
       addTag: new AddConversationTag(dependencies),
       removeTag: new RemoveConversationTag(dependencies),
+      knowledgeCreate: new CreateKnowledgeArticle(dependencies),
+      knowledgeUpdate: new UpdateKnowledgeArticle(dependencies),
+      knowledgeList: new ListKnowledgeArticles(dependencies),
     };
+    const chatbotPolicy = {
+      maximumChunks: config.chatbot?.retrieval.maximumChunks ?? 6,
+      minimumScore: config.chatbot?.retrieval.minimumScore ?? 0.15,
+      maximumChunkCharacters:
+        config.chatbot?.retrieval.maximumChunkCharacters ?? 1200,
+      overlapCharacters: config.chatbot?.retrieval.overlapCharacters ?? 120,
+      maximumTurns: config.chatbot?.limits.messagesPerSession ?? 50,
+      messagesPerMinute: config.chatbot?.limits.messagesPerMinute ?? 10,
+      maximumInputCharacters:
+        config.chatbot?.limits.maximumInputCharacters ?? 4000,
+      maximumContextCharacters:
+        config.chatbot?.limits.maximumContextCharacters ?? 12000,
+      maximumOutputCharacters:
+        config.chatbot?.limits.maximumOutputCharacters ?? 4000,
+      allowHumanHandoff: config.chatbot?.behavior.allowHumanHandoff ?? true,
+      showSources: config.chatbot?.behavior.showSources ?? true,
+    };
+    const chatbotEnabled =
+      config.chatbot?.enabled === true || config.features?.chatbot === true;
+    const chatbotAI = config.ai;
+    const generateChatbotAnswer =
+      chatbotAI?.generateChatbotAnswer?.bind(chatbotAI);
+    const generateHandoffSummary =
+      chatbotAI?.generateHandoffSummary?.bind(chatbotAI);
+    const providerTimeoutMs =
+      config.chatbot?.limits.providerTimeoutMs ?? 20_000;
+    const chatbotDependencies =
+      chatbotEnabled && generateChatbotAnswer
+        ? {
+            ...dependencies,
+            chatbotPolicy,
+            ai: {
+              generateChatbotAnswer: (
+                input: Parameters<NonNullable<typeof generateChatbotAnswer>>[0],
+              ) => within(generateChatbotAnswer(input), providerTimeoutMs),
+              ...(generateHandoffSummary
+                ? {
+                    generateHandoffSummary: (
+                      input: Parameters<
+                        NonNullable<typeof generateHandoffSummary>
+                      >[0],
+                    ) =>
+                      within(generateHandoffSummary(input), providerTimeoutMs),
+                  }
+                : {}),
+            },
+          }
+        : undefined;
+    const knowledgePublish = config.database.knowledge
+      ? new PublishKnowledgeArticle({ ...dependencies, chatbotPolicy })
+      : undefined;
+    const chatbotUseCases = chatbotDependencies
+      ? {
+          start: new StartChatbotSession(chatbotDependencies),
+          get: new GetChatbotSession(dependencies),
+          turns: new ListChatbotTurns(dependencies),
+          send: new SendChatbotMessage(chatbotDependencies),
+          handoff: new RequestChatbotHandoff(chatbotDependencies),
+        }
+      : undefined;
     const attachmentPolicy = config.attachments ?? {
       enabled: config.features?.attachments === true,
       maxFileSizeBytes: 26_214_400,
@@ -258,6 +353,82 @@ class ComposedSupportKit implements SupportKit {
         this.run(() => useCases.addTag.execute({ ...input, projectId })),
       remove: (input) =>
         this.run(() => useCases.removeTag.execute({ ...input, projectId })),
+    };
+    const requireKnowledgePublish = () => {
+      if (!knowledgePublish)
+        throw new SupportKitError(
+          "CHATBOT_DISABLED",
+          "Knowledge publication is unavailable.",
+        );
+      return knowledgePublish;
+    };
+    this.knowledge = {
+      create: (input) =>
+        this.run(() =>
+          useCases.knowledgeCreate.execute({
+            ...input,
+            tags: input.tags ?? [],
+            projectId,
+          }),
+        ),
+      update: (input) =>
+        this.run(() =>
+          useCases.knowledgeUpdate.execute({ ...input, projectId }),
+        ),
+      publish: (input) =>
+        this.run(() =>
+          requireKnowledgePublish().execute({ ...input, projectId }),
+        ),
+      archive: (input) =>
+        this.run(() =>
+          new ArchiveKnowledgeArticle(dependencies).execute({
+            ...input,
+            projectId,
+          }),
+        ),
+      restore: (input) =>
+        this.run(() =>
+          new RestoreKnowledgeArticle(dependencies).execute({
+            ...input,
+            projectId,
+          }),
+        ),
+      list: (input) =>
+        this.run(() => useCases.knowledgeList.execute({ ...input, projectId })),
+      revisions: (input) =>
+        this.run(async () => {
+          if (!config.database.knowledge)
+            throw new SupportKitError(
+              "KNOWLEDGE_UNAVAILABLE",
+              "Knowledge is unavailable.",
+            );
+          return config.database.knowledge.listRevisions(
+            projectId,
+            input.articleId,
+          );
+        }),
+    };
+    const requireChatbot = () => {
+      if (!chatbotUseCases)
+        throw new SupportKitError(
+          "CHATBOT_DISABLED",
+          "The automated assistant is unavailable.",
+        );
+      return chatbotUseCases;
+    };
+    this.chatbot = {
+      start: (input) =>
+        this.run(() => requireChatbot().start.execute({ ...input, projectId })),
+      get: (input) =>
+        this.run(() => requireChatbot().get.execute({ ...input, projectId })),
+      turns: (input) =>
+        this.run(() => requireChatbot().turns.execute({ ...input, projectId })),
+      send: (input) =>
+        this.run(() => requireChatbot().send.execute({ ...input, projectId })),
+      handoff: (input) =>
+        this.run(() =>
+          requireChatbot().handoff.execute({ ...input, projectId }),
+        ),
     };
     const requireAttachmentUseCases = () => {
       if (!attachmentUseCases)

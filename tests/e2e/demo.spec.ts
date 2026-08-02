@@ -238,9 +238,23 @@ test("mounts the protected agent dashboard with accessible note isolation and re
   await page.goto("/support");
   const dashboard = page.locator("[data-support-dashboard-host]");
   await expect(dashboard.getByRole("heading", { name: "Inbox" })).toBeVisible();
+  await expect(dashboard.locator(".sk-dashboard")).toHaveAttribute(
+    "data-mobile-view",
+    "inbox",
+  );
   await dashboard
     .getByRole("button", { name: /Checkout problem/ })
     .press("Enter");
+  await expect(dashboard.locator(".sk-dashboard")).toHaveAttribute(
+    "data-mobile-view",
+    "conversation",
+  );
+  await expect(
+    dashboard.getByRole("main", { name: "Conversation workspace" }),
+  ).toBeVisible();
+  await expect(
+    dashboard.getByRole("button", { name: "Back to inbox" }),
+  ).toBeVisible();
   await expect(
     dashboard.getByRole("button", { name: "Back to inbox" }),
   ).toBeFocused();

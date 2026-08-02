@@ -8,11 +8,16 @@ import {
   apiErrorEnvelopeSchema,
   attachmentIdsSchema,
   createUploadIntentSchema,
+  chatbotHandoffInputSchema,
+  chatbotMessageInputSchema,
+  knowledgeArticleInputSchema,
+  knowledgeArticlePatchSchema,
   conversationStatusSchema,
   type CustomerConversation,
   type CustomerMessage,
   type FeatureFlags,
   type AttachmentConfig,
+  type ChatbotConfig,
   type WidgetConfig,
 } from "@crazyglegit/support-contracts";
 import { z } from "zod";
@@ -49,6 +54,60 @@ const noteSchema = z
   );
 const assignSchema = z.strictObject({ agentId: z.string().trim().min(1) });
 const statusSchema = z.strictObject({ status: conversationStatusSchema });
+
+function publicKnowledgeArticle(
+  article: Awaited<ReturnType<NonNullable<SupportKit["knowledge"]>["create"]>>,
+) {
+  return {
+    id: article.id,
+    title: article.title,
+    sourceKey: article.sourceKey,
+    summary: article.summary,
+    body: article.body,
+    tags: article.tags,
+    status: article.status,
+    revisionNumber: article.revisionNumber,
+    ...(article.activeRevisionNumber
+      ? { activeRevisionNumber: article.activeRevisionNumber }
+      : {}),
+    ...(article.publishedAt
+      ? { publishedAt: article.publishedAt.toISOString() }
+      : {}),
+    ...(article.archivedAt
+      ? { archivedAt: article.archivedAt.toISOString() }
+      : {}),
+    createdAt: article.createdAt.toISOString(),
+    updatedAt: article.updatedAt.toISOString(),
+  };
+}
+function publicChatbotSession(
+  session: Awaited<ReturnType<NonNullable<SupportKit["chatbot"]>["start"]>>,
+) {
+  return {
+    id: session.id,
+    status: session.status,
+    ...(session.conversationId
+      ? { conversationId: session.conversationId }
+      : {}),
+    turnCount: session.turnCount,
+    createdAt: session.createdAt.toISOString(),
+    updatedAt: session.updatedAt.toISOString(),
+  };
+}
+function publicChatbotTurn(
+  turn: Awaited<
+    ReturnType<NonNullable<SupportKit["chatbot"]>["turns"]>
+  >[number],
+) {
+  return {
+    id: turn.id,
+    actorType: turn.actorType,
+    content: turn.content,
+    citations: turn.citations,
+    outcome: turn.outcome,
+    createdAt: turn.createdAt.toISOString(),
+  };
+}
 
 type RouteMethod = "GET" | "POST" | "PATCH" | "DELETE";
 type CustomerActor =
@@ -317,6 +376,20 @@ function statusFor(code: string): number {
     MALWARE_DETECTED: 422,
     SCAN_FAILED: 422,
     STORAGE_UNAVAILABLE: 503,
+    CHATBOT_DISABLED: 404,
+    CHATBOT_SESSION_NOT_FOUND: 404,
+    CHATBOT_SESSION_LIMIT_REACHED: 429,
+    KNOWLEDGE_UNAVAILABLE: 404,
+    KNOWLEDGE_NOT_FOUND: 404,
+    KNOWLEDGE_NOT_PUBLISHED: 409,
+    RETRIEVAL_FAILED: 503,
+    INSUFFICIENT_KNOWLEDGE: 422,
+    AI_PROVIDER_UNAVAILABLE: 503,
+    AI_RESPONSE_INVALID: 502,
+    CITATION_VALIDATION_FAILED: 502,
+    HANDOFF_ALREADY_REQUESTED: 409,
+    INDEXING_FAILED: 422,
+    EMBEDDING_DIMENSION_MISMATCH: 422,
     RATE_LIMITED: 429,
     FEATURE_UNAVAILABLE: 501,
     CONFIGURATION_ERROR: 500,
@@ -347,6 +420,7 @@ async function dispatch(
     readonly widget?: WidgetConfig;
     readonly features?: FeatureFlags;
     readonly attachments?: AttachmentConfig;
+    readonly chatbot?: ChatbotConfig;
     readonly attachmentRateLimit?: (input: {
       readonly request: Request;
       readonly operation: "intent" | "complete";
@@ -388,7 +462,9 @@ async function dispatch(
         attachments:
           publicConfiguration.attachments?.enabled === true ||
           publicConfiguration.features?.attachments === true,
-        chatbot: publicConfiguration.features?.chatbot === true,
+        chatbot:
+          publicConfiguration.chatbot?.enabled === true ||
+          publicConfiguration.features?.chatbot === true,
       },
       ...(publicConfiguration.attachments?.enabled
         ? {
@@ -408,6 +484,178 @@ async function dispatch(
   if (method === "POST" && parts.length === 1 && parts[0] === "session") {
     const actor = await customerActor(support, request);
     return success({ actor });
+  }
+  if (parts[0] === "chatbot") {
+    const chatbotOperations = support.chatbot;
+    if (!chatbotOperations)
+      throw new HttpError(
+        "CHATBOT_DISABLED",
+        "The automated assistant is unavailable.",
+        404,
+      );
+    const actor = await customerActor(support, request);
+    if (method === "POST" && parts[1] === "sessions" && parts.length === 2)
+      return success(
+        publicChatbotSession(await chatbotOperations.start({ actor })),
+        201,
+      );
+    const sessionId = parts[2];
+    if (parts[1] === "sessions" && sessionId) {
+      if (method === "GET" && parts.length === 3)
+        return success(
+          publicChatbotSession(
+            await chatbotOperations.get({ actor, sessionId }),
+          ),
+        );
+      if (parts[3] === "messages") {
+        if (method === "GET" && parts.length === 4)
+          return success(
+            (await chatbotOperations.turns({ actor, sessionId })).map(
+              publicChatbotTurn,
+            ),
+          );
+        if (method === "POST" && parts.length === 4) {
+          const input = await body(request, chatbotMessageInputSchema);
+          const result = await chatbotOperations.send({
+            actor,
+            sessionId,
+            message: input.message,
+            clientMessageId: input.clientMessageId,
+          });
+          return success(
+            {
+              userTurn: publicChatbotTurn(result.userTurn),
+              botTurn: publicChatbotTurn(result.botTurn),
+            },
+            201,
+          );
+        }
+      }
+      if (method === "POST" && parts[3] === "handoff" && parts.length === 4) {
+        const input = await body(request, chatbotHandoffInputSchema);
+        const handoff = await chatbotOperations.handoff({
+          actor,
+          sessionId,
+          reason: input.reason,
+        });
+        return success(
+          {
+            conversationId: handoff.conversationId,
+            requestedAt: handoff.requestedAt.toISOString(),
+          },
+          201,
+        );
+      }
+    }
+  }
+  if (parts[0] === "agent" && parts[1] === "knowledge") {
+    const knowledgeOperations = support.knowledge;
+    if (!knowledgeOperations)
+      throw new HttpError(
+        "KNOWLEDGE_UNAVAILABLE",
+        "Knowledge is unavailable.",
+        404,
+      );
+    const actor = await support.auth.resolveAgent(authContext(request));
+    if (parts.length === 2) {
+      if (method === "GET") {
+        const rawStatus = new URL(request.url).searchParams.get("status");
+        const parsedStatus =
+          rawStatus === null
+            ? undefined
+            : z.enum(["draft", "published", "archived"]).safeParse(rawStatus);
+        if (parsedStatus !== undefined && !parsedStatus.success)
+          throw new HttpError(
+            "VALIDATION_ERROR",
+            "The knowledge status filter is invalid.",
+            400,
+          );
+        return success(
+          (
+            await knowledgeOperations.list({
+              actor,
+              ...(parsedStatus?.success ? { status: parsedStatus.data } : {}),
+            })
+          ).map(publicKnowledgeArticle),
+        );
+      }
+      if (method === "POST") {
+        const input = await body(request, knowledgeArticleInputSchema);
+        return success(
+          publicKnowledgeArticle(
+            await knowledgeOperations.create({ actor, ...input }),
+          ),
+          201,
+        );
+      }
+    }
+    const articleId = parts[2];
+    if (articleId && method === "PATCH" && parts.length === 3) {
+      const patch = await body(request, knowledgeArticlePatchSchema);
+      const safePatch = Object.fromEntries(
+        Object.entries(patch).filter((entry) => entry[1] !== undefined),
+      );
+      return success(
+        publicKnowledgeArticle(
+          await knowledgeOperations.update({
+            actor,
+            articleId,
+            patch: safePatch,
+          }),
+        ),
+      );
+    }
+    if (
+      articleId &&
+      method === "POST" &&
+      parts.length === 4 &&
+      parts[3] === "publish"
+    )
+      return success(
+        publicKnowledgeArticle(
+          await knowledgeOperations.publish({ actor, articleId }),
+        ),
+      );
+    if (
+      articleId &&
+      method === "POST" &&
+      parts.length === 4 &&
+      parts[3] === "archive"
+    )
+      return success(
+        publicKnowledgeArticle(
+          await knowledgeOperations.archive({ actor, articleId }),
+        ),
+      );
+    if (
+      articleId &&
+      method === "POST" &&
+      parts.length === 4 &&
+      parts[3] === "restore"
+    )
+      return success(
+        publicKnowledgeArticle(
+          await knowledgeOperations.restore({ actor, articleId }),
+        ),
+      );
+    if (
+      articleId &&
+      method === "GET" &&
+      parts.length === 4 &&
+      parts[3] === "revisions"
+    )
+      return success(
+        (await knowledgeOperations.revisions({ actor, articleId })).map(
+          (revision) => ({
+            revisionNumber: revision.revisionNumber,
+            title: revision.title,
+            summary: revision.summary,
+            body: revision.body,
+            createdAt: revision.createdAt.toISOString(),
+            updatedAt: revision.updatedAt.toISOString(),
+          }),
+        ),
+      );
   }
   if (parts[0] === "attachments") {
     const actor = await customerActor(support, request);
@@ -792,6 +1040,7 @@ export function createSupportServer(
     readonly widget?: WidgetConfig;
     readonly features?: FeatureFlags;
     readonly attachments?: AttachmentConfig;
+    readonly chatbot?: ChatbotConfig;
     readonly attachmentRateLimit?: (input: {
       readonly request: Request;
       readonly operation: "intent" | "complete";
@@ -858,5 +1107,6 @@ export function createSupportHandler(
     ...(config.widget ? { widget: config.widget } : {}),
     ...(config.features ? { features: config.features } : {}),
     ...(config.attachments ? { attachments: config.attachments } : {}),
+    ...(config.chatbot ? { chatbot: config.chatbot } : {}),
   });
 }

@@ -24,6 +24,11 @@ import type {
   Message,
   Tag,
   AttachmentMetadata,
+  ChatbotHandoff,
+  ChatbotSession,
+  ChatbotTurn,
+  KnowledgeArticle,
+  KnowledgeArticleRevision,
 } from "@crazyglegit/support-core";
 import type {
   DefaultRole,
@@ -103,6 +108,60 @@ export interface SupportAgentOperations {
 export interface SupportTagOperations {
   add(input: ConversationTagOperationInput): Promise<void>;
   remove(input: ConversationTagOperationInput): Promise<void>;
+}
+
+export interface KnowledgeArticleCreateInput {
+  readonly actor: AgentActor;
+  readonly title: string;
+  readonly sourceKey: string;
+  readonly summary: string;
+  readonly body: string;
+  readonly tags?: readonly string[];
+}
+export interface KnowledgeArticleUpdateInput {
+  readonly articleId: string;
+  readonly actor: AgentActor;
+  readonly patch: Partial<
+    Pick<KnowledgeArticle, "title" | "summary" | "body" | "tags">
+  >;
+}
+export interface KnowledgeArticleActionInput {
+  readonly articleId: string;
+  readonly actor: AgentActor;
+}
+export interface SupportKnowledgeOperations {
+  create(input: KnowledgeArticleCreateInput): Promise<KnowledgeArticle>;
+  update(input: KnowledgeArticleUpdateInput): Promise<KnowledgeArticle>;
+  publish(input: KnowledgeArticleActionInput): Promise<KnowledgeArticle>;
+  archive(input: KnowledgeArticleActionInput): Promise<KnowledgeArticle>;
+  restore(input: KnowledgeArticleActionInput): Promise<KnowledgeArticle>;
+  list(input: {
+    readonly actor: AgentActor;
+    readonly status?: KnowledgeArticle["status"];
+  }): Promise<readonly KnowledgeArticle[]>;
+  revisions(
+    input: KnowledgeArticleActionInput,
+  ): Promise<readonly KnowledgeArticleRevision[]>;
+}
+export interface ChatbotSessionInput {
+  readonly actor: CustomerActor;
+}
+export interface ChatbotSessionActionInput extends ChatbotSessionInput {
+  readonly sessionId: string;
+}
+export interface SupportChatbotOperations {
+  start(input: ChatbotSessionInput): Promise<ChatbotSession>;
+  get(input: ChatbotSessionActionInput): Promise<ChatbotSession>;
+  turns(input: ChatbotSessionActionInput): Promise<readonly ChatbotTurn[]>;
+  send(
+    input: ChatbotSessionActionInput & {
+      readonly message: string;
+      readonly clientMessageId: string;
+    },
+  ): Promise<{ readonly userTurn: ChatbotTurn; readonly botTurn: ChatbotTurn }>;
+  handoff(
+    input: ChatbotSessionActionInput & { readonly reason: string },
+  ): Promise<ChatbotHandoff>;
 }
 
 export interface CreateAttachmentUploadIntentOperationInput {
@@ -201,6 +260,8 @@ export interface SupportKit {
   readonly customers: SupportCustomerOperations;
   readonly agents: SupportAgentOperations;
   readonly tags: SupportTagOperations;
+  readonly knowledge?: SupportKnowledgeOperations;
+  readonly chatbot?: SupportChatbotOperations;
   readonly attachments: SupportAttachmentOperations;
   readonly auth: SupportAuthOperations;
   readonly events: SupportEventOperations;

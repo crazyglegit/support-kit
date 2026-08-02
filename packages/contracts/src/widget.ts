@@ -1,4 +1,6 @@
 import { z } from "zod";
+export { chatbotSessionSchema, chatbotTurnSchema } from "./chatbot.js";
+export type { PublicChatbotSession, PublicChatbotTurn } from "./chatbot.js";
 import {
   clientMessageIdSchema,
   identifierSchema,
@@ -118,6 +120,20 @@ export const widgetApiErrorEnvelopeSchema = z.strictObject({
       "MALWARE_DETECTED",
       "SCAN_FAILED",
       "STORAGE_UNAVAILABLE",
+      "CHATBOT_DISABLED",
+      "CHATBOT_SESSION_NOT_FOUND",
+      "CHATBOT_SESSION_LIMIT_REACHED",
+      "KNOWLEDGE_UNAVAILABLE",
+      "KNOWLEDGE_NOT_FOUND",
+      "KNOWLEDGE_NOT_PUBLISHED",
+      "RETRIEVAL_FAILED",
+      "INSUFFICIENT_KNOWLEDGE",
+      "AI_PROVIDER_UNAVAILABLE",
+      "AI_RESPONSE_INVALID",
+      "CITATION_VALIDATION_FAILED",
+      "HANDOFF_ALREADY_REQUESTED",
+      "INDEXING_FAILED",
+      "EMBEDDING_DIMENSION_MISMATCH",
       "INTERNAL_ERROR",
     ]),
     message: z.string().min(1),

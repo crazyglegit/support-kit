@@ -14,6 +14,26 @@ export type {
 } from "./attachments.js";
 export type { ConversationStatusChangedData } from "./events.js";
 export {
+  ArchiveKnowledgeArticle,
+  CreateKnowledgeArticle,
+  GetChatbotSession,
+  ListChatbotTurns,
+  ListKnowledgeArticles,
+  PublishKnowledgeArticle,
+  RequestChatbotHandoff,
+  RestoreKnowledgeArticle,
+  SendChatbotMessage,
+  StartChatbotSession,
+  UpdateKnowledgeArticle,
+  chunkKnowledge,
+} from "./chatbot.js";
+export type {
+  ChatbotDependencies,
+  ChatbotGenerationPort,
+  ChatbotPolicy,
+  KnowledgeDependencies,
+} from "./chatbot.js";
+export {
   AddConversationTag,
   AddInternalNote,
   AssignConversation,

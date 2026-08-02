@@ -5,9 +5,11 @@ import {
   dashboardConversationSchema,
   dashboardMessageSchema,
   dashboardSocketEventEnvelopeSchema,
+  publicKnowledgeArticleSchema,
   type DashboardAgentSession,
   type DashboardConversation,
   type DashboardMessage,
+  type PublicKnowledgeArticle,
 } from "@crazyglegit/support-contracts/dashboard";
 import { io, type Socket } from "socket.io-client";
 import { z } from "zod";
@@ -100,6 +102,10 @@ function mergeMessages(
 function text(element: Element, value: string) {
   element.textContent = value;
 }
+function formText(data: FormData, name: string): string {
+  const value = data.get(name);
+  return typeof value === "string" ? value : "";
+}
 
 export class SupportDashboardController {
   readonly #options;
@@ -114,6 +120,7 @@ export class SupportDashboardController {
   #messages: DashboardMessage[] = [];
   #active: string | undefined;
   #connection: Connection = "connecting";
+  #hasConnected = false;
   #mode: Mode = "reply";
   #destroyed = false;
   #initialized = false;
@@ -131,6 +138,38 @@ export class SupportDashboardController {
   #readMessageIds = new Set<string>();
   #detailSequence = 0;
   #announcement = "";
+  #focusedConversationId: string | undefined;
+  #knowledgeMode = false;
+  #knowledgeArticles: PublicKnowledgeArticle[] = [];
+  readonly #onRootClick = (event: Event): void => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const conversation = target.closest<HTMLElement>("[data-conversation]");
+    if (conversation?.dataset.conversation)
+      void this.openConversation(conversation.dataset.conversation);
+  };
+  readonly #onRootFocusIn = (event: FocusEvent): void => {
+    const target = event.target;
+    this.#focusedConversationId =
+      target instanceof Element
+        ? target.closest<HTMLElement>("[data-conversation]")?.dataset
+            .conversation
+        : undefined;
+  };
+  readonly #onDocumentKeydown = (event: KeyboardEvent): void => {
+    if (event.key !== "Enter" || !this.#focusedConversationId) return;
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      target !== document.body &&
+      !this.#root.contains(target)
+    )
+      return;
+    const conversationId = this.#focusedConversationId;
+    this.#focusedConversationId = undefined;
+    event.preventDefault();
+    void this.openConversation(conversationId);
+  };
   constructor(options: SupportDashboardOptions) {
     this.#options = resolveDashboardOptions(options);
     this.#filters = this.#options.initialFilters ?? {};
@@ -143,6 +182,9 @@ export class SupportDashboardController {
     this.#root.className = "sk-dashboard";
     this.#root.style.setProperty("--sk-accent", this.#options.accentColor);
     this.#options.target.replaceChildren(this.#root);
+    this.#root.addEventListener("click", this.#onRootClick);
+    this.#root.addEventListener("focusin", this.#onRootFocusIn);
+    document.addEventListener("keydown", this.#onDocumentKeydown, true);
     this.#applyTheme();
   }
   async initialize() {
@@ -161,8 +203,13 @@ export class SupportDashboardController {
         this.#attachmentConfig = undefined;
       }
       await this.#resolveSession();
-      if (!this.#has("conversation.read")) {
+      if (!this.#has("conversation.read") && !this.#has("knowledge.read")) {
         this.#renderUnauthorized();
+        return;
+      }
+      if (!this.#has("conversation.read")) {
+        await this.#openKnowledge();
+        this.#emit("ready");
         return;
       }
       if (!this.#has("conversation.reply") && this.#has("internal_note.create"))
@@ -174,7 +221,7 @@ export class SupportDashboardController {
       this.#renderError(error);
     }
   }
-  async refreshInbox() {
+  async refreshInbox(render = true) {
     if (this.#destroyed) return;
     const query =
       this.#filters.assignment === "mine" && this.#session
@@ -198,7 +245,11 @@ export class SupportDashboardController {
       .filter(
         (item) => !this.#filters.status || item.status === this.#filters.status,
       );
-    this.#render();
+    if (render) {
+      if (!this.#active && this.#root.querySelector(".sk-inbox"))
+        this.#renderInboxList();
+      else this.#render();
+    }
   }
   async openConversation(conversationId: string) {
     if (this.#destroyed) return;
@@ -279,6 +330,9 @@ export class SupportDashboardController {
     this.#http.dispose();
     this.#socket?.removeAllListeners();
     this.#socket?.disconnect();
+    this.#root.removeEventListener("click", this.#onRootClick);
+    this.#root.removeEventListener("focusin", this.#onRootFocusIn);
+    document.removeEventListener("keydown", this.#onDocumentKeydown, true);
     for (const uploads of this.#uploads.values())
       for (const upload of uploads) upload.handle?.cancel();
     if (this.#media && this.#mediaListener)
@@ -312,15 +366,19 @@ export class SupportDashboardController {
     this.#customerTyping = false;
     this.#detailSequence += 1;
   }
-  async #resolveSession() {
+  async #resolveSession(): Promise<boolean> {
     const rawSession = await this.#http.request<unknown>("/agent/session", {
       method: "POST",
     });
     const next = dashboardAgentSessionSchema.parse(rawSession).actor;
-    if (this.#session && this.#session.id !== next.id) {
+    const identityChanged = Boolean(
+      this.#session && this.#session.id !== next.id,
+    );
+    if (identityChanged) {
       this.#clearPrivateState();
     }
     this.#session = next;
+    return identityChanged;
   }
   #emit(type: SupportDashboardEventName, data?: unknown) {
     const event: SupportDashboardEvent = {
@@ -351,9 +409,10 @@ export class SupportDashboardController {
       auth: { actorType: "agent" },
     });
     this.#socket.on("connect", () => {
-      const reconnect = this.#connection !== "connecting";
+      const reconnect = this.#hasConnected;
+      this.#hasConnected = true;
       this.#connection = "connected";
-      this.#render();
+      this.#renderConnectionState();
       if (!reconnect && this.#active)
         this.#socket?.emit("conversation.join", {
           conversationId: this.#active,
@@ -365,14 +424,14 @@ export class SupportDashboardController {
       this.#stopTyping(false);
       this.#customerTyping = false;
       this.#connection = navigator.onLine ? "reconnecting" : "offline";
-      this.#render();
+      this.#renderConnectionState();
       this.#emit("connection.changed", { state: this.#connection });
     });
     this.#socket.on("connect_error", () => {
       this.#stopTyping(false);
       this.#customerTyping = false;
       this.#connection = "offline";
-      this.#render();
+      this.#renderConnectionState();
       this.#emit("connection.changed", { state: this.#connection });
     });
     for (const name of [
@@ -400,7 +459,7 @@ export class SupportDashboardController {
       };
       if (data.actor?.type === "customer" || data.actor?.type === "visitor") {
         this.#customerTyping = data.active === true;
-        this.#render();
+        this.#renderConnectionState();
       }
     });
     this.#socket.connect();
@@ -437,8 +496,8 @@ export class SupportDashboardController {
     }
     await this.#resync();
   }
-  async #resync() {
-    await this.refreshInbox();
+  async #resync(renderInbox = true) {
+    await this.refreshInbox(renderInbox);
     if (this.#active) {
       const active = this.#active;
       const detail = dashboardConversationDetailSchema.parse(
@@ -457,7 +516,7 @@ export class SupportDashboardController {
   }
   async #reauthorizeAndResync() {
     try {
-      await this.#resolveSession();
+      const identityChanged = await this.#resolveSession();
       if (!this.#has("conversation.read")) {
         this.#renderUnauthorized();
         return;
@@ -466,7 +525,8 @@ export class SupportDashboardController {
         this.#socket?.emit("conversation.join", {
           conversationId: this.#active,
         });
-      await this.#resync();
+      await this.#resync(identityChanged);
+      if (identityChanged) this.#render();
     } catch (error) {
       this.#clearPrivateState();
       this.#renderError(error);
@@ -796,36 +856,205 @@ export class SupportDashboardController {
     text(this.#root.querySelector(".sk-state")!, message);
     this.#emit("error", { message });
   }
+  #connectionText(): string {
+    if (this.#connection === "connected") {
+      if (this.#customerTyping) return "Customer is typing…";
+      const active = this.#conversations.find(
+        (conversation) => conversation.id === this.#active,
+      );
+      return active?.status.replaceAll("_", " ") ?? "Connected";
+    }
+    return this.#connection === "offline"
+      ? this.#options.strings.offline
+      : this.#options.strings.reconnecting;
+  }
+  #renderConnectionState(): void {
+    if (this.#destroyed) return;
+    const status = this.#root.querySelector<HTMLElement>(
+      "[data-connection-status]",
+    );
+    if (status) status.textContent = this.#connectionText();
+    const announcement = this.#root.querySelector<HTMLElement>(
+      "[data-connection-announcement]",
+    );
+    if (announcement)
+      announcement.textContent =
+        this.#connection === "connected" ? "Connected" : this.#connectionText();
+  }
+  #renderInboxList(): void {
+    const list = this.#root.querySelector<HTMLUListElement>(".sk-inbox");
+    if (!list) return;
+    const existing = new Map(
+      [...list.querySelectorAll<HTMLButtonElement>("[data-conversation]")].map(
+        (button) => [button.dataset.conversation, button] as const,
+      ),
+    );
+    if (!this.#conversations.length) {
+      list.replaceChildren();
+      const empty = document.createElement("li");
+      empty.className = "sk-state";
+      empty.textContent = this.#options.strings.noConversations;
+      list.append(empty);
+      return;
+    }
+    list.querySelector(".sk-state")?.remove();
+    for (const conversation of this.#conversations) {
+      let button = existing.get(conversation.id);
+      if (!button) {
+        const item = document.createElement("li");
+        button = document.createElement("button");
+        button.className = "sk-item";
+        button.dataset.conversation = conversation.id;
+        button.append(
+          document.createElement("strong"),
+          document.createElement("span"),
+        );
+        button.lastElementChild?.classList.add("sk-meta");
+        item.append(button);
+      }
+      button.setAttribute(
+        "aria-current",
+        String(conversation.id === this.#active),
+      );
+      text(
+        button.querySelector("strong")!,
+        conversation.subject ?? "Support conversation",
+      );
+      text(
+        button.querySelector(".sk-meta")!,
+        `${conversation.status.replaceAll("_", " ")} · ${new Date(conversation.updatedAt).toLocaleString()}`,
+      );
+      list.append(button.parentElement!);
+      existing.delete(conversation.id);
+    }
+    for (const button of existing.values()) button.parentElement?.remove();
+  }
+  async #openKnowledge(): Promise<void> {
+    if (!this.#has("knowledge.read")) return;
+    try {
+      this.#knowledgeArticles = publicKnowledgeArticleSchema
+        .array()
+        .parse(await this.#http.request<unknown>("/agent/knowledge"));
+      this.#knowledgeMode = true;
+      this.#render();
+    } catch (error) {
+      this.#renderError(error);
+    }
+  }
+  #renderKnowledge(): void {
+    this.#root.dataset.mobileView = "inbox";
+    this.#root.innerHTML = `<style>${css}</style><section class="sk-panel" style="grid-column:1/-1" aria-label="Knowledge base"><header class="sk-head"><button class="sk-btn" data-action="knowledge-back">${this.#options.strings.back}</button><h1>Knowledge base</h1>${this.#has("knowledge.manage") ? `<button class="sk-btn sk-btn-primary" data-action="knowledge-new">New article</button>` : ""}</header><div class="sk-detail"><div class="sk-knowledge-list"></div><form class="sk-knowledge-form" hidden><label>Title<input class="sk-compose" name="title" maxlength="200" required></label><label>Source key<input class="sk-compose" name="sourceKey" maxlength="128" required pattern="[a-z0-9-]+"></label><label>Summary<textarea class="sk-compose" name="summary" maxlength="1000"></textarea></label><label>Article body<textarea class="sk-compose" name="body" maxlength="200000" required></textarea></label><button class="sk-btn sk-btn-primary" type="submit">Save draft</button></form></div><div class="sk-visually-hidden" aria-live="polite">${this.#announcement}</div></section>`;
+    const list = this.#root.querySelector<HTMLElement>(".sk-knowledge-list");
+    if (list) {
+      if (!this.#knowledgeArticles.length)
+        list.textContent = "No knowledge articles.";
+      for (const article of this.#knowledgeArticles) {
+        const card = document.createElement("article");
+        card.className = "sk-item";
+        const title = document.createElement("strong");
+        title.textContent = article.title;
+        const meta = document.createElement("p");
+        meta.className = "sk-meta";
+        meta.textContent = `${article.status} · revision ${article.revisionNumber} · ${article.sourceKey}`;
+        const summary = document.createElement("p");
+        summary.textContent = article.summary;
+        card.append(title, meta, summary);
+        if (this.#has("knowledge.manage")) {
+          const action = document.createElement("button");
+          action.className = "sk-btn";
+          action.dataset.knowledgeAction =
+            article.status === "published"
+              ? "archive"
+              : article.status === "archived"
+                ? "restore"
+                : "publish";
+          action.dataset.articleId = article.id;
+          action.textContent = action.dataset.knowledgeAction;
+          card.append(action);
+        }
+        list.append(card);
+      }
+    }
+    this.#root
+      .querySelector('[data-action="knowledge-back"]')
+      ?.addEventListener("click", () => {
+        this.#knowledgeMode = false;
+        this.#render();
+      });
+    this.#root
+      .querySelector('[data-action="knowledge-new"]')
+      ?.addEventListener("click", () => {
+        const form =
+          this.#root.querySelector<HTMLFormElement>(".sk-knowledge-form");
+        if (form) {
+          form.hidden = false;
+          form.querySelector<HTMLInputElement>('input[name="title"]')?.focus();
+        }
+      });
+    this.#root
+      .querySelector<HTMLFormElement>(".sk-knowledge-form")
+      ?.addEventListener(
+        "submit",
+        (event) => void this.#createKnowledge(event),
+      );
+    this.#root
+      .querySelectorAll<HTMLElement>("[data-knowledge-action]")
+      .forEach((element) =>
+        element.addEventListener(
+          "click",
+          () => void this.#knowledgeAction(element),
+        ),
+      );
+  }
+  async #createKnowledge(event: SubmitEvent): Promise<void> {
+    event.preventDefault();
+    if (!this.#has("knowledge.manage")) return;
+    const form = event.currentTarget as HTMLFormElement;
+    const data = new FormData(form);
+    try {
+      await this.#http.request("/agent/knowledge", {
+        method: "POST",
+        body: JSON.stringify({
+          title: formText(data, "title"),
+          sourceKey: formText(data, "sourceKey"),
+          summary: formText(data, "summary"),
+          body: formText(data, "body"),
+          tags: [],
+        }),
+      });
+      await this.#openKnowledge();
+    } catch (error) {
+      this.#renderError(error);
+    }
+  }
+  async #knowledgeAction(element: HTMLElement): Promise<void> {
+    if (!this.#has("knowledge.manage")) return;
+    const articleId = element.dataset.articleId;
+    const action = element.dataset.knowledgeAction;
+    if (!articleId || !action) return;
+    try {
+      await this.#http.request(
+        `/agent/knowledge/${encodeURIComponent(articleId)}/${action}`,
+        { method: "POST", body: "{}" },
+      );
+      await this.#openKnowledge();
+    } catch (error) {
+      this.#renderError(error);
+    }
+  }
   #render() {
     if (!this.#session || this.#destroyed) return;
+    if (this.#knowledgeMode) {
+      this.#renderKnowledge();
+      return;
+    }
     const focused =
       document.activeElement instanceof HTMLElement
         ? document.activeElement.dataset.action
         : undefined;
     this.#root.dataset.mobileView = this.#active ? "conversation" : "inbox";
-    this.#root.innerHTML = `<style>${css}</style><section class="sk-panel sk-inbox-panel" aria-label="${this.#options.strings.inbox}"><header class="sk-head"><h1>${this.#options.strings.inbox}</h1><button class="sk-btn" data-action="refresh">${this.#options.strings.refresh}</button></header><div class="sk-head sk-controls"><select class="sk-select" data-action="assignment" aria-label="Assignment filter"><option value="all">${this.#options.strings.allConversations}</option><option value="mine">${this.#options.strings.assignedToMe}</option></select><select class="sk-select" data-action="status" aria-label="Status filter"><option value="">All statuses</option>${["open", "waiting_for_agent", "waiting_for_customer", "resolved", "closed", "spam"].map((s) => `<option value="${s}">${s.replaceAll("_", " ")}</option>`).join("")}</select></div><ul class="sk-inbox"></ul></section><main class="sk-panel sk-conversation" aria-label="Conversation workspace"></main><aside class="sk-panel sk-context" aria-label="${this.#options.strings.customerDetails}"></aside><div class="sk-visually-hidden" aria-live="polite" aria-atomic="true">${this.#announcement || (this.#connection === "connected" ? "Connected" : this.#options.strings.reconnecting)}</div>`;
-    const list = this.#root.querySelector(".sk-inbox")!;
-    if (!this.#conversations.length)
-      list.innerHTML = `<li class="sk-state">${this.#options.strings.noConversations}</li>`;
-    else
-      for (const conversation of this.#conversations) {
-        const li = document.createElement("li");
-        const button = document.createElement("button");
-        button.className = "sk-item";
-        button.dataset.conversation = conversation.id;
-        button.setAttribute(
-          "aria-current",
-          String(conversation.id === this.#active),
-        );
-        const strong = document.createElement("strong");
-        strong.textContent = conversation.subject ?? "Support conversation";
-        const status = document.createElement("span");
-        status.className = "sk-meta";
-        status.textContent = `${conversation.status.replaceAll("_", " ")} · ${new Date(conversation.updatedAt).toLocaleString()}`;
-        button.append(strong, status);
-        li.append(button);
-        list.append(li);
-      }
+    this.#root.innerHTML = `<style>${css}</style><section class="sk-panel sk-inbox-panel" aria-label="${this.#options.strings.inbox}"><header class="sk-head"><h1>${this.#options.strings.inbox}</h1>${this.#has("knowledge.read") ? `<button class="sk-btn" data-action="knowledge">Knowledge</button>` : ""}<button class="sk-btn" data-action="refresh">${this.#options.strings.refresh}</button></header><div class="sk-head sk-controls"><select class="sk-select" data-action="assignment" aria-label="Assignment filter"><option value="all">${this.#options.strings.allConversations}</option><option value="mine">${this.#options.strings.assignedToMe}</option></select><select class="sk-select" data-action="status" aria-label="Status filter"><option value="">All statuses</option>${["open", "waiting_for_agent", "waiting_for_customer", "resolved", "closed", "spam"].map((s) => `<option value="${s}">${s.replaceAll("_", " ")}</option>`).join("")}</select></div><ul class="sk-inbox"></ul></section><main class="sk-panel sk-conversation" aria-label="Conversation workspace"></main><aside class="sk-panel sk-context" aria-label="${this.#options.strings.customerDetails}"></aside><div class="sk-visually-hidden" data-connection-announcement aria-live="polite" aria-atomic="true">${this.#announcement || (this.#connection === "connected" ? "Connected" : this.#options.strings.reconnecting)}</div>`;
+    this.#renderInboxList();
     const center = this.#root.querySelector(".sk-conversation")!;
     const active = this.#conversations.find((c) => c.id === this.#active);
     if (!active)
@@ -843,7 +1072,7 @@ export class SupportDashboardController {
         canReply || canNote
           ? `<div class="sk-compose-wrap"><div class="sk-compose-actions">${canReply ? `<button class="sk-btn" data-action="reply" aria-pressed="${String(this.#mode === "reply")}">${this.#options.strings.reply}</button>` : ""}${canNote ? `<button class="sk-btn sk-btn-note" data-action="note" aria-pressed="${String(this.#mode === "note")}">${this.#options.strings.internalNote}</button>` : ""}${this.#attachmentConfig ? `<input class="sk-file-input" type="file" multiple><button class="sk-btn" data-action="attach" aria-label="Attach files">Attach</button>` : ""}<button class="sk-btn sk-btn-primary sk-send" data-action="send">${this.#options.strings.send}</button></div><div class="sk-files sk-upload-queue" role="status" aria-label="Selected attachments"></div><label class="sk-visually-hidden" for="sk-composer">${this.#mode === "note" ? this.#options.strings.internalNote : this.#options.strings.reply}</label><textarea id="sk-composer" class="sk-compose" maxlength="50000"></textarea></div>`
           : `<div class="sk-live" role="status">Read-only access</div>`;
-      center.innerHTML = `<header class="sk-head"><button class="sk-btn sk-back" data-action="back">${this.#options.strings.back}</button><h2></h2><div class="sk-controls"></div></header><div class="sk-live" role="status">${liveStatus}</div><div class="sk-timeline" aria-label="Conversation messages"></div>${composer}`;
+      center.innerHTML = `<header class="sk-head"><button class="sk-btn sk-back" data-action="back">${this.#options.strings.back}</button><h2></h2><div class="sk-controls"></div></header><div class="sk-live" data-connection-status role="status">${liveStatus}</div><div class="sk-timeline" aria-label="Conversation messages"></div>${composer}`;
       text(
         center.querySelector("h2")!,
         active.subject ?? "Support conversation",
@@ -1025,16 +1254,11 @@ export class SupportDashboardController {
           });
       });
     this.#root
-      .querySelectorAll<HTMLElement>("[data-conversation]")
-      .forEach((el) =>
-        el.addEventListener(
-          "click",
-          () => void this.openConversation(el.dataset.conversation!),
-        ),
-      );
-    this.#root
       .querySelector('[data-action="refresh"]')
       ?.addEventListener("click", () => void this.refreshInbox());
+    this.#root
+      .querySelector('[data-action="knowledge"]')
+      ?.addEventListener("click", () => void this.#openKnowledge());
     this.#root
       .querySelector('[data-action="back"]')
       ?.addEventListener("click", () => this.closeConversation());

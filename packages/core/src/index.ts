@@ -31,6 +31,14 @@ export type {
   ProjectScopedEntity,
   SavedReply,
   Tag,
+  KnowledgeArticle,
+  KnowledgeArticleRevision,
+  KnowledgeArticleStatus,
+  KnowledgeChunk,
+  ChatbotSession,
+  ChatbotTurn,
+  ChatbotCitation,
+  ChatbotHandoff,
 } from "./entities.js";
 export {
   assertConversationTransition,
@@ -75,4 +83,6 @@ export type {
   SupportRepository,
   TagRepository,
   VisitorRepository,
+  KnowledgeRepository,
+  ChatbotRepository,
 } from "./repositories.js";

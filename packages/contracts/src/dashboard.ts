@@ -1,4 +1,6 @@
 import { z } from "zod";
+export { publicKnowledgeArticleSchema } from "./chatbot.js";
+export type { PublicKnowledgeArticle } from "./chatbot.js";
 import { API_ERROR_CODES } from "./api.js";
 import { publicAttachmentSchema } from "./attachments.js";
 import {

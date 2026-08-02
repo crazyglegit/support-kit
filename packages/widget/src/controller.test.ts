@@ -17,6 +17,9 @@ function envelope(data: unknown, status = 200): Response {
 }
 
 beforeEach(() => {
+  responses["/api/support/widget/config"] = {
+    features: { attachments: false, chatbot: false },
+  };
   responses["/api/support/conversations"] = [];
   vi.stubGlobal(
     "fetch",
@@ -104,6 +107,41 @@ describe("SupportWidgetController", () => {
       ?.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(root?.textContent).not.toContain("SECRET NOTE");
+    widget.destroy();
+  });
+
+  it("renders chatbot answers and citations as escaped plain text", async () => {
+    responses["/api/support/widget/config"] = {
+      features: { attachments: false, chatbot: true },
+    };
+    responses["/api/support/chatbot/sessions"] = {
+      id: "session-1",
+      status: "active",
+      turnCount: 2,
+      createdAt: "2026-08-02T00:00:00.000Z",
+      updatedAt: "2026-08-02T00:00:00.000Z",
+    };
+    responses["/api/support/chatbot/sessions/session-1/messages"] = [
+      {
+        id: "turn-1",
+        actorType: "bot",
+        content: '<img src=x onerror="alert(1)"> Refunds take five days.',
+        citations: [{ sourceKey: "refunds", articleTitle: "Refund policy" }],
+        outcome: "answered",
+        createdAt: "2026-08-02T00:00:00.000Z",
+      },
+    ];
+    const widget = createSupportWidget();
+    widget.open();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const root = document.querySelector<HTMLElement>(
+      "[data-support-widget]",
+    )?.shadowRoot;
+    root?.querySelector<HTMLButtonElement>('[data-action="chatbot"]')?.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(root?.textContent).toContain("Refunds take five days");
+    expect(root?.textContent).toContain("Refund policy");
+    expect(root?.querySelector("img")).toBeNull();
     widget.destroy();
   });
 });

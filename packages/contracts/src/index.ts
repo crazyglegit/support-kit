@@ -21,6 +21,27 @@ export {
   publicAttachmentSchema,
   uploadTargetSchema,
 } from "./attachments.js";
+export {
+  chatbotCitationSchema,
+  chatbotGenerationOutputSchema,
+  chatbotHandoffInputSchema,
+  chatbotMessageInputSchema,
+  chatbotSessionSchema,
+  chatbotTurnSchema,
+  knowledgeArticleInputSchema,
+  knowledgeArticlePatchSchema,
+  knowledgeArticleStatusSchema,
+  publicKnowledgeArticleSchema,
+} from "./chatbot.js";
+export type {
+  ChatbotCitation,
+  ChatbotGenerationOutput,
+  KnowledgeArticleInput,
+  KnowledgeArticleStatus,
+  PublicChatbotSession,
+  PublicChatbotTurn,
+  PublicKnowledgeArticle,
+} from "./chatbot.js";
 export type {
   AttachmentUploadIntent,
   CreateUploadIntentRequest,
@@ -46,9 +67,16 @@ export type {
   SupportRealtimeAdapter,
   SupportStorageAdapter,
   UploadTarget,
+  ChatbotGenerationInput,
+  ChatbotGenerationResult,
+  ChatbotHandoffSummaryInput,
+  ChatbotHandoffSummaryResult,
+  EmbeddingAdapter,
+  RetrievedKnowledgeContext,
 } from "./adapters.js";
 export {
   attachmentConfigSchema,
+  chatbotConfigSchema,
   defineSupportConfig,
   featureFlagsSchema,
   lifecycleConfigSchema,
@@ -60,6 +88,7 @@ export {
 } from "./config.js";
 export type {
   AttachmentConfig,
+  ChatbotConfig,
   FeatureFlags,
   LifecycleConfig,
   ProjectInitializationPolicy,

@@ -7,6 +7,7 @@ import type {
   SupportNotificationAdapter,
   SupportRealtimeAdapter,
   SupportStorageAdapter,
+  EmbeddingAdapter,
 } from "./adapters.js";
 import { DEFAULT_ATTACHMENT_MIME_TYPES } from "./attachments.js";
 import { identifierSchema, metadataSchema } from "./shared.js";
@@ -54,6 +55,68 @@ export const attachmentConfigSchema = z.strictObject({
   scanPolicy: z.enum(["required", "optional", "disabled"]).default("required"),
 });
 
+export const chatbotConfigSchema = z.strictObject({
+  enabled: z.boolean().default(false),
+  retrieval: z
+    .strictObject({
+      mode: z.enum(["lexical", "semantic", "hybrid"]).default("lexical"),
+      maximumChunks: z.number().int().min(1).max(20).default(8),
+      minimumScore: z.number().min(0).max(1).default(0.68),
+      maximumChunkCharacters: z.number().int().min(200).max(8000).default(1600),
+      overlapCharacters: z.number().int().min(0).max(1000).default(200),
+    })
+    .default({
+      mode: "lexical",
+      maximumChunks: 8,
+      minimumScore: 0.68,
+      maximumChunkCharacters: 1600,
+      overlapCharacters: 200,
+    }),
+  behavior: z
+    .strictObject({
+      allowHumanHandoff: z.boolean().default(true),
+      maximumConversationTurns: z.number().int().min(1).max(100).default(30),
+      showSources: z.boolean().default(true),
+    })
+    .default({
+      allowHumanHandoff: true,
+      maximumConversationTurns: 30,
+      showSources: true,
+    }),
+  limits: z
+    .strictObject({
+      messagesPerMinute: z.number().int().min(1).max(120).default(10),
+      messagesPerSession: z.number().int().min(1).max(1000).default(100),
+      maximumInputCharacters: z.number().int().min(1).max(20_000).default(4000),
+      maximumContextCharacters: z
+        .number()
+        .int()
+        .min(1000)
+        .max(100_000)
+        .default(24_000),
+      maximumOutputCharacters: z
+        .number()
+        .int()
+        .min(200)
+        .max(20_000)
+        .default(6000),
+      providerTimeoutMs: z
+        .number()
+        .int()
+        .min(1000)
+        .max(120_000)
+        .default(20_000),
+    })
+    .default({
+      messagesPerMinute: 10,
+      messagesPerSession: 100,
+      maximumInputCharacters: 4000,
+      maximumContextCharacters: 24_000,
+      maximumOutputCharacters: 6000,
+      providerTimeoutMs: 20_000,
+    }),
+});
+
 const originSchema = z
   .url()
   .refine((value) => new URL(value).origin === value, {
@@ -93,6 +156,7 @@ export const supportDeclarativeConfigSchema = z.strictObject({
   widget: widgetConfigSchema.optional(),
   features: featureFlagsSchema.optional(),
   attachments: attachmentConfigSchema.optional(),
+  chatbot: chatbotConfigSchema.optional(),
   security: securityConfigSchema,
   lifecycle: lifecycleConfigSchema.default({ adapterOwnership: "host" }),
 });
@@ -104,6 +168,7 @@ export type WidgetConfig = z.infer<typeof widgetConfigSchema>;
 export type SupportWidgetConfig = WidgetConfig;
 export type FeatureFlags = z.infer<typeof featureFlagsSchema>;
 export type AttachmentConfig = z.infer<typeof attachmentConfigSchema>;
+export type ChatbotConfig = z.infer<typeof chatbotConfigSchema>;
 export type SecurityConfig = z.infer<typeof securityConfigSchema>;
 export type ProjectInitializationPolicy = z.infer<
   typeof projectInitializationPolicySchema
@@ -127,6 +192,7 @@ export interface SupportConfig extends Omit<
   readonly attachmentScanner?: AttachmentScannerAdapter;
   readonly notifications?: SupportNotificationAdapter;
   readonly ai?: SupportAIAdapter;
+  readonly embeddings?: EmbeddingAdapter;
 }
 
 /** Validates declarative settings while preserving typed adapter instances. */
@@ -139,6 +205,7 @@ export function defineSupportConfig<TConfig extends SupportConfig>(
     widget: config.widget,
     features: config.features,
     attachments: config.attachments,
+    chatbot: config.chatbot,
     security: config.security,
     lifecycle: config.lifecycle,
   });
@@ -157,5 +224,18 @@ export function defineSupportConfig<TConfig extends SupportConfig>(
     );
   if (declarative.features?.aiWriting && !config.ai)
     throw new Error("AI writing requires an AI adapter.");
+  const chatbotEnabled =
+    declarative.chatbot?.enabled === true ||
+    declarative.features?.chatbot === true;
+  if (chatbotEnabled && !config.ai?.generateChatbotAnswer)
+    throw new Error("Chatbot requires a chatbot generation adapter.");
+  if (
+    chatbotEnabled &&
+    declarative.chatbot?.retrieval.mode !== "lexical" &&
+    !config.embeddings
+  )
+    throw new Error(
+      "Semantic chatbot retrieval requires an embeddings adapter.",
+    );
   return { ...config, ...declarative };
 }
